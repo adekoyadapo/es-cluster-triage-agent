@@ -242,7 +242,7 @@ footer p{color:var(--el-muted);font-size:.82rem}
       </tr>
       <tr>
         <td>Auth credentials</td><td>—</td>
-        <td>One API key with <code>read</code> + <code>view_index_metadata</code> on index patterns, <code>feature_agentBuilder.all</code> + <code>feature_actions.read</code> on <code>kibana-.kibana</code>, and <code>monitor_inference</code> cluster privilege — or superuser credentials</td>
+        <td>One API key with <code>read</code> + <code>view_index_metadata</code> on index patterns; <code>feature_agentBuilder.all</code>, <code>feature_actions.read</code>, <code>workflowsManagement:read</code> on <code>kibana-.kibana</code>; and <code>monitor_inference</code> cluster privilege — or superuser credentials</td>
         <td><a class="doc-link" href="https://www.elastic.co/docs/deploy-manage/api-keys/elasticsearch-api-keys" target="_blank" rel="noopener">API Keys</a></td>
       </tr>
       <tr>
@@ -277,7 +277,11 @@ footer p{color:var(--el-muted);font-size:.82rem}
       }],
       "applications": [{
         "application": "kibana-.kibana",
-        "privileges": ["feature_agentBuilder.all", "feature_actions.read"],
+        "privileges": [
+          "feature_agentBuilder.all",
+          "feature_actions.read",
+          "workflowsManagement:read"
+        ],
         "resources": ["space:default"]
       }]
     }
