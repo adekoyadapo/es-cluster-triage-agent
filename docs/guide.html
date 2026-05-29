@@ -242,7 +242,7 @@ footer p{color:var(--el-muted);font-size:.82rem}
       </tr>
       <tr>
         <td>Auth credentials</td><td>—</td>
-        <td>API key or username/password with admin role</td>
+        <td>One API key with <code>manage</code> + <code>read</code> on index patterns, <code>kibana-.kibana: all</code> — or superuser credentials</td>
         <td><a class="doc-link" href="https://www.elastic.co/docs/deploy-manage/api-keys/elasticsearch-api-keys" target="_blank" rel="noopener">API Keys</a></td>
       </tr>
       <tr>
@@ -255,21 +255,25 @@ footer p{color:var(--el-muted);font-size:.82rem}
 
   <h3>API Key Setup</h3>
   <p style="color:var(--el-muted);margin-bottom:8px;font-size:.9rem">
-    Paste these in Kibana → Management → Dev Tools. The installer will show you these commands interactively.
+    You need <strong>one key</strong> that covers both Kibana deployment and Elasticsearch index access.
+    Paste this in Kibana → Management → Dev Tools. The installer shows the command interactively at startup.
   </p>
   <div class="doc-links" style="margin-bottom:12px">
     <a class="doc-link" href="https://www.elastic.co/docs/deploy-manage/api-keys/elasticsearch-api-keys" target="_blank" rel="noopener">Elasticsearch API Keys</a>
     <a class="doc-link" href="https://www.elastic.co/docs/explore-analyze/ai-features/elastic-agent-builder" target="_blank" rel="noopener">Agent Builder permissions</a>
   </div>
 
-  <p class="code-label">Installer API key (Kibana admin permissions)</p>
+  <p class="code-label">Single installer key — Kibana + Elasticsearch access</p>
   <pre><code>POST /_security/api_key
 {
   "name": "es-cluster-triage-installer",
   "role_descriptors": {
-    "kibana_deployer": {
+    "triage-installer": {
       "cluster": ["monitor"],
-      "indices": [{"names":["*"],"privileges":["read","view_index_metadata"]}],
+      "indices": [{
+        "names": ["&lt;your-monitoring-pattern&gt;", "&lt;your-log-pattern&gt;"],
+        "privileges": ["manage", "read", "view_index_metadata"]
+      }],
       "applications": [{
         "application": "kibana-.kibana",
         "privileges": ["all"],
@@ -279,25 +283,30 @@ footer p{color:var(--el-muted);font-size:.82rem}
   }
 }</code></pre>
 
-  <p class="code-label" style="margin-top:16px">ES|QL API key (monitoring read access)</p>
-  <pre><code>POST /_security/api_key
-{
-  "name": "es-cluster-triage-esql",
-  "role_descriptors": {
-    "monitoring_reader": {
-      "indices": [{
-        // Replace with your actual monitoring and log datastream patterns.
-        // The installer will prompt you for these during setup.
-        // Example defaults shown below:
-        "names": [".monitoring-es-*", "logs-*"],
-        "privileges": ["read", "view_index_metadata"]
-      }]
-    }
-  }
-}</code></pre>
+  <div class="callout" style="margin-top:14px">
+    <p style="margin:0 0 6px 0">
+      <strong>Replace the pattern placeholders</strong> with the datastream names you'll enter in step 5.
+      Common values:
+    </p>
+    <table style="width:100%;border-collapse:collapse;font-size:.85rem">
+      <tr>
+        <td style="padding:4px 12px 4px 0;color:var(--el-muted);white-space:nowrap">Monitoring</td>
+        <td><code>.monitoring-es-8-mb</code> &nbsp;or&nbsp; <code>.monitoring-es-*</code> &nbsp;or&nbsp; <code>metrics-elasticsearch.*</code></td>
+      </tr>
+      <tr>
+        <td style="padding:4px 12px 4px 0;color:var(--el-muted);white-space:nowrap">Logs / audit</td>
+        <td><code>filebeat-*</code> &nbsp;or&nbsp; <code>logs-elasticsearch.*</code> &nbsp;or&nbsp; <code>elastic-cloud-logs-8</code></td>
+      </tr>
+    </table>
+    <p style="margin:8px 0 0 0;font-size:.85rem">
+      <strong>Why <code>manage</code>?</strong> The installer calls <code>POST /_aliases</code> to create
+      <code>es-monitoring</code> and <code>elastic-cloud-logs-8</code> aliases — this requires the
+      <code>manage</code> index privilege in addition to <code>read</code>.
+    </p>
+  </div>
 
-  <div class="callout">
-    💡 <strong>Tip:</strong> You can also use <code>elastic</code> username with its password — the installer accepts both API keys and basic auth.
+  <div class="callout" style="margin-top:10px">
+    💡 <strong>Alternative:</strong> Use the <code>elastic</code> superuser with its password — the installer accepts username/password in addition to API keys and no separate key is needed.
   </div>
 </section>
 
@@ -363,9 +372,14 @@ footer p{color:var(--el-muted);font-size:.82rem}
       <div class="step-body">
         <div class="step-title">Datastream Configuration</div>
         <div class="step-desc">
-          Enter your monitoring datastream pattern (default: <code>.monitoring-es-*</code>).
-          The installer checks doc count, runs a test ES|QL query, and creates a named alias
-          <code>es-triage-monitoring</code> → your pattern.
+          Enter your monitoring datastream pattern (default: <code>.monitoring-es-*</code>) and
+          your log/audit pattern (default: same as monitoring).
+          The installer resolves matching indices, then creates two aliases automatically:
+          <ul style="margin:6px 0 0 16px;padding:0;font-size:.88rem;color:var(--el-muted)">
+            <li><code>es-monitoring</code> → your monitoring indices (including Kibana monitoring sibling if found)</li>
+            <li><code>elastic-cloud-logs-8</code> → your log indices (only when pattern differs from default)</li>
+          </ul>
+          All tool queries are rewritten to use these aliases at deploy time.
         </div>
         <div class="doc-links">
           <a class="doc-link" href="https://www.elastic.co/docs/deploy-manage/monitor/stack-monitoring" target="_blank" rel="noopener">Stack Monitoring setup</a>
