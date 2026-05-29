@@ -33,7 +33,7 @@ INSTALLED_FILE = INSTALL_DIR / ".installed.json"
 
 CONNECTOR_NAME = "ES Cluster Triage Slack"
 CONNECTOR_TYPE_ID = ".slack"
-WORKFLOW_ID_SUFFIX = "es-cluster-triage-summary"
+WORKFLOW_ID_SUFFIX = "es-triage"
 AGENT_ID = "es-cluster-triage-agent"
 
 TOTAL_STEPS = 9
@@ -847,6 +847,13 @@ def deploy_workflows(
             return True
         warn(f"Workflow '{wf_id}' POST succeeded but is not retrievable — check YAML syntax in Kibana")
         return False
+
+    # Warn if a previous install left the old long-form IDs (they cannot be deleted via API)
+    old_suffix = "es-cluster-triage-summary"
+    for old_type in ("alert", "scheduled"):
+        old_id = f"{namespace}-{old_suffix}-{old_type}" if namespace != "default" else f"{old_suffix}-{old_type}"
+        if get_if_exists(kb_url, hdr, space_path(namespace, f"/api/workflows/workflow/{old_id}")):
+            warn(f"Old workflow ID '{old_id}' still exists — you may remove it manually in Kibana")
 
     if wf_choice in ("1", "3"):
         wf_id = f"{namespace}-{WORKFLOW_ID_SUFFIX}-alert" if namespace != "default" else f"{WORKFLOW_ID_SUFFIX}-alert"
