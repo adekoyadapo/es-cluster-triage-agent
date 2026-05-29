@@ -554,24 +554,22 @@ def collect_and_validate_datastreams(
             ok(f"Alias '{monitoring_alias}' already exists")
             monitoring_alias_created = True
         elif "index_not_found" in exc_str.lower():
-            warn(f"No index matching '{monitoring_ds}' — alias skipped (deploy will still proceed)")
+            info(f"No index matching '{monitoring_ds}' — alias skipped, tools will query pattern directly")
+        elif "HTTP 403" in exc_str:
+            info(f"Alias '{monitoring_alias}' skipped — API key lacks manage privilege (tools will query '{monitoring_ds}' directly)")
         else:
-            warn(f"Could not create alias '{monitoring_alias}': {exc}")
+            info(f"Alias '{monitoring_alias}' skipped: {exc_str[:120]}")
 
     # Try adding the Kibana monitoring sibling to the same alias (e.g. .monitoring-kibana-8-mb)
     kibana_sibling = re.sub(r'\.monitoring-es', '.monitoring-kibana', monitoring_ds)
-    if kibana_sibling != monitoring_ds:
+    if kibana_sibling != monitoring_ds and monitoring_alias_created:
         try:
             es_request(es_url, hdr, "POST", "/_aliases", body={
                 "actions": [{"add": {"index": kibana_sibling, "alias": monitoring_alias, "is_write_index": False}}]
             }, timeout=15)
             ok(f"Added Kibana monitoring sibling '{kibana_sibling}' to alias")
-        except RuntimeError as exc:
-            exc_str = str(exc)
-            if "index_not_found" in exc_str.lower() or "already" in exc_str.lower():
-                pass  # Not present or already added — both are fine
-            else:
-                info(f"Kibana sibling alias skipped: {exc_str[:80]}")
+        except RuntimeError:
+            pass  # Sibling not present, already added, or no permission — all fine
 
     # ── Create log alias (elastic-cloud-logs-8) ───────────────────────────────
     log_alias = "elastic-cloud-logs-8"
@@ -594,21 +592,11 @@ def collect_and_validate_datastreams(
                 ok(f"Alias '{log_alias}' already exists")
                 log_alias_created = True
             elif "index_not_found" in exc_str.lower():
-                warn(f"No index matching '{log_ds}' — alias '{log_alias}' skipped")
+                info(f"No index matching '{log_ds}' — alias skipped, tools will query pattern directly")
+            elif "HTTP 403" in exc_str:
+                info(f"Alias '{log_alias}' skipped — API key lacks manage privilege (tools will query '{log_ds}' directly)")
             else:
-                warn(f"Could not create alias '{log_alias}': {exc}")
-                info(f"Log tools will query '{log_ds}' directly — ensure your API key covers it")
-
-    # ── API key coverage reminder ─────────────────────────────────────────────
-    if not monitoring_alias_created or (not log_alias_created and log_ds != "elastic-cloud-logs-8"):
-        print(f"""
-  {c(YELLOW, "API key coverage check")}
-  One or more aliases could not be created. Make sure your API key has
-  {c(BOLD, "manage")} + {c(BOLD, "read")} + {c(BOLD, "view_index_metadata")} on these patterns:
-
-    {c(BOLD, monitoring_ds)}  ← monitoring tools
-    {c(BOLD, log_ds)}  ← error log and audit security tools
-        """)
+                info(f"Alias '{log_alias}' skipped: {exc_str[:120]}")
 
     return {
         "monitoring_ds": monitoring_ds,
