@@ -7,7 +7,7 @@ consts:
 triggers:
   - type: scheduled
     with:
-      interval: "__SCHEDULE_INTERVAL__"
+      every: "__SCHEDULE_INTERVAL__"
 steps:
   - name: metrics_summary
     type: elasticsearch.request
@@ -50,7 +50,6 @@ steps:
         Recommended next checks
         Confidence level
 
-        Scheduled run timestamp: {{ now() }}
         Metrics source: {{ consts.default_metrics_pattern }}
 
         Metrics evidence:
