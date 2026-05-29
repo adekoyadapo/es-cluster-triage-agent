@@ -306,7 +306,8 @@ def show_api_key_guide() -> None:
   {c(DIM, '      "cluster": ["monitor"],')}
   {c(DIM, '      "indices": [{')}
   {c(DIM, '        "names": ["<your-monitoring-pattern>", "<your-log-pattern>"],')}
-  {c(DIM, '        "privileges": ["manage", "read", "view_index_metadata"]')}
+  {c(DIM, '        "privileges": ["manage", "read", "view_index_metadata"],')}
+  {c(DIM, '        "allow_restricted_indices": true')}
   {c(DIM, '      }],')}
   {c(DIM, '      "applications": [{')}
   {c(DIM, '        "application": "kibana-.kibana",')}
@@ -318,9 +319,13 @@ def show_api_key_guide() -> None:
   {c(DIM, '}')}
 
   {c(YELLOW, "Notes:")}
-  · Replace <your-monitoring-pattern> and <your-log-pattern> with the patterns
-    you'll enter in step 5 (e.g. .monitoring-es-8-mb and filebeat-*)
-  · Use {c(BOLD, 'manage')} (not just read) — the installer creates index aliases
+  · Replace <your-monitoring-pattern> and <your-log-pattern> with the actual
+    index names you'll enter in step 5 (e.g. .monitoring-es-8-mb, filebeat-9.3.4)
+  · {c(BOLD, 'allow_restricted_indices: true')} is required — monitoring indices
+    (.monitoring-es-*) are restricted/system indices in ES 8.x; without this flag
+    the manage privilege is silently scoped away from them
+  · The key is capped to the creating user's own privileges (ES intersection rule).
+    Create this key as {c(BOLD, 'elastic')} or a superuser to get full manage access.
   · Using username/password (elastic or superuser) also works — no key needed
     """)
 
@@ -722,25 +727,30 @@ def deploy_all(
         done += 1
         progress_bar(label, done, total_deploy)
 
-    # ── Patch tool queries to use aliases ─────────────────────────────────────
-    monitoring_alias = ds_info.get("monitoring_alias", "es-monitoring")
+    # ── Patch tool queries — use alias if created, raw pattern otherwise ──────
+    monitoring_ds = ds_info["monitoring_ds"]
     log_ds = ds_info["log_ds"]
+    monitoring_alias = ds_info.get("monitoring_alias", "es-monitoring")
     log_alias = ds_info.get("log_alias", "elastic-cloud-logs-8")
+    monitoring_alias_created = ds_info.get("monitoring_alias_created", False)
     log_alias_created = ds_info.get("log_alias_created", False)
+
+    # Use alias name if creation succeeded; fall back to raw user pattern
+    monitoring_target = monitoring_alias if monitoring_alias_created else monitoring_ds
+    log_target = log_alias if log_alias_created else log_ds
 
     for tool in tools:
         cfg = tool.get("configuration", {})
         query = cfg.get("query", "")
-        # Always rewrite monitoring pattern → es-monitoring alias
-        query = re.sub(r'FROM \.monitoring-es-\S+', f"FROM {monitoring_alias}", query)
-        # Log tools: keep elastic-cloud-logs-8 if alias was created; otherwise use raw pattern
-        if not log_alias_created and log_ds != "elastic-cloud-logs-8":
-            query = query.replace("FROM elastic-cloud-logs-8", f"FROM {log_ds}")
+        query = re.sub(r'FROM \.monitoring-es-\S+', f"FROM {monitoring_target}", query)
+        if log_target != "elastic-cloud-logs-8":
+            query = query.replace("FROM elastic-cloud-logs-8", f"FROM {log_target}")
         cfg["query"] = query
         tool["configuration"] = cfg
 
-    log_target = log_alias if log_alias_created else log_ds
-    ok(f"Tool queries updated: monitoring → {monitoring_alias}, logs → {log_target}")
+    mon_label = f"{monitoring_target}" + ("" if monitoring_alias_created else " (direct — alias skipped)")
+    log_label = f"{log_target}" + ("" if log_alias_created else " (direct — alias skipped)")
+    ok(f"Tool queries updated: monitoring → {mon_label}, logs → {log_label}")
 
     # ── Tear down existing ─────────────────────────────────────────────────────
     info("Removing previous installation if any…")
