@@ -836,13 +836,14 @@ def deploy_workflows(
         return yaml
 
     def deploy_and_verify_workflow(wf_id: str, yaml_text: str, wf_name: str) -> bool:
-        delete_if_exists(kb_url, hdr, space_path(namespace, f"/api/workflows/workflow/{wf_id}"))
         deploy_workflow_yaml(kb_url, hdr, namespace, wf_id, yaml_text, wf_name=wf_name)
         # Verify it actually landed — a YAML parse failure returns 200 but may not persist
         wf_data = get_if_exists(kb_url, hdr, space_path(namespace, f"/api/workflows/workflow/{wf_id}"))
         if wf_data:
             returned_name = wf_data.get("name") or wf_name
-            ok(f"Workflow '{returned_name}' created ✓  ({wf_id})")
+            ok(f"Workflow '{returned_name}' deployed ✓  ({wf_id})")
+            sp = f"/s/{namespace}" if namespace != "default" else ""
+            info(f"View in Kibana → {kb_url}{sp}/app/management/insightsAndAlerting/triggersActionsConnectors/workflows")
             return True
         warn(f"Workflow '{wf_id}' POST succeeded but is not retrievable — check YAML syntax in Kibana")
         return False
