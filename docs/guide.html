@@ -242,7 +242,7 @@ footer p{color:var(--el-muted);font-size:.82rem}
       </tr>
       <tr>
         <td>Auth credentials</td><td>—</td>
-        <td>One API key with <code>manage</code> + <code>read</code> on index patterns, <code>kibana-.kibana: all</code> — or superuser credentials</td>
+        <td>One API key with <code>read</code> + <code>view_index_metadata</code> on index patterns, <code>feature_agentBuilder.all</code> + <code>feature_actions.read</code> on <code>kibana-.kibana</code>, and <code>monitor_inference</code> cluster privilege — or superuser credentials</td>
         <td><a class="doc-link" href="https://www.elastic.co/docs/deploy-manage/api-keys/elasticsearch-api-keys" target="_blank" rel="noopener">API Keys</a></td>
       </tr>
       <tr>
@@ -260,7 +260,7 @@ footer p{color:var(--el-muted);font-size:.82rem}
   </p>
   <div class="doc-links" style="margin-bottom:12px">
     <a class="doc-link" href="https://www.elastic.co/docs/deploy-manage/api-keys/elasticsearch-api-keys" target="_blank" rel="noopener">Elasticsearch API Keys</a>
-    <a class="doc-link" href="https://www.elastic.co/docs/explore-analyze/ai-features/elastic-agent-builder" target="_blank" rel="noopener">Agent Builder permissions</a>
+    <a class="doc-link" href="https://www.elastic.co/docs/explore-analyze/ai-features/agent-builder/permissions" target="_blank" rel="noopener">Agent Builder permissions</a>
   </div>
 
   <p class="code-label">Single installer key — Kibana + Elasticsearch access</p>
@@ -269,16 +269,16 @@ footer p{color:var(--el-muted);font-size:.82rem}
   "name": "es-cluster-triage-installer",
   "role_descriptors": {
     "triage-installer": {
-      "cluster": ["monitor"],
+      "cluster": ["monitor", "monitor_inference"],
       "indices": [{
         "names": ["&lt;your-monitoring-index&gt;", "&lt;your-log-index&gt;"],
-        "privileges": ["manage", "read", "view_index_metadata"],
+        "privileges": ["read", "view_index_metadata"],
         "allow_restricted_indices": true
       }],
       "applications": [{
         "application": "kibana-.kibana",
-        "privileges": ["all"],
-        "resources": ["*"]
+        "privileges": ["feature_agentBuilder.all", "feature_actions.read"],
+        "resources": ["space:default"]
       }]
     }
   }
@@ -286,35 +286,44 @@ footer p{color:var(--el-muted);font-size:.82rem}
 
   <div class="callout" style="margin-top:14px">
     <p style="margin:0 0 6px 0">
-      <strong>Replace the placeholders</strong> with the exact index names you'll enter in step 5:
+      <strong>Replace the placeholders</strong> with your values:
     </p>
     <table style="width:100%;border-collapse:collapse;font-size:.85rem">
       <tr>
-        <td style="padding:4px 12px 4px 0;color:var(--el-muted);white-space:nowrap">Monitoring</td>
+        <td style="padding:4px 12px 4px 0;color:var(--el-muted);white-space:nowrap">Monitoring index</td>
         <td><code>.monitoring-es-8-mb</code> &nbsp;or&nbsp; <code>.monitoring-es-*</code> &nbsp;or&nbsp; <code>metrics-elasticsearch.*</code></td>
       </tr>
       <tr>
-        <td style="padding:4px 12px 4px 0;color:var(--el-muted);white-space:nowrap">Logs / audit</td>
+        <td style="padding:4px 12px 4px 0;color:var(--el-muted);white-space:nowrap">Logs / audit index</td>
         <td><code>filebeat-9.3.4</code> &nbsp;or&nbsp; <code>logs-elasticsearch.*</code> &nbsp;or&nbsp; <code>elastic-cloud-logs-8</code></td>
+      </tr>
+      <tr>
+        <td style="padding:4px 12px 4px 0;color:var(--el-muted);white-space:nowrap">Space resource</td>
+        <td><code>"space:default"</code> for the default space, or <code>"space:&lt;your-namespace&gt;"</code> for a custom space (e.g. <code>space:cluster-triage</code>)</td>
       </tr>
     </table>
     <p style="margin:10px 0 4px 0;font-size:.85rem">
-      <strong>Why <code>allow_restricted_indices: true</code>?</strong><br>
-      Monitoring indices like <code>.monitoring-es-*</code> are <em>restricted system indices</em> in Elasticsearch 8.x.
-      Without this flag, the <code>manage</code> privilege is silently scoped away from them — even for a key
-      that explicitly requests it — because Elasticsearch enforces a hard boundary around system indices at the
-      role-descriptor level.
+      <strong>Why <code>feature_agentBuilder.all</code> instead of <code>all</code>?</strong><br>
+      Kibana feature privileges for API keys must use the specific feature name format
+      (<code>feature_agentBuilder.all</code>), not the generic <code>"all"</code> shorthand.
+      Using <code>"all"</code> alone does not grant Agent Builder access to an API key — it only
+      works for user roles assigned through the Kibana UI. <code>feature_actions.read</code> is
+      also required if the agent uses AI connectors.
     </p>
     <p style="margin:8px 0 4px 0;font-size:.85rem">
-      <strong>Important — privilege intersection rule:</strong><br>
-      An API key can never exceed the privileges of the user who created it. Run this command as the
-      <code>elastic</code> superuser (or any user who already has <code>manage</code> on those indices)
-      so the key actually receives the privileges it requests.
+      <strong>Why <code>monitor_inference</code>?</strong><br>
+      The Agent Builder uses the Elasticsearch Inference API for AI-powered query generation and
+      ES|QL generation. Without this cluster privilege the agent chat and tool execution will fail.
+    </p>
+    <p style="margin:8px 0 4px 0;font-size:.85rem">
+      <strong>Why <code>allow_restricted_indices: true</code>?</strong><br>
+      Monitoring indices like <code>.monitoring-es-*</code> are <em>restricted system indices</em> in Elasticsearch 8.x.
+      Omit this flag if you're using <code>metrics-elasticsearch.*</code> or other non-restricted patterns.
     </p>
     <p style="margin:8px 0 0 0;font-size:.85rem">
-      <strong>If aliases can't be created</strong> (e.g. you're using a restricted key), the installer
+      <strong>If aliases can't be created</strong> (403 on <code>indices:admin/aliases</code>), the installer
       falls back automatically — tool queries are patched to use your index patterns directly,
-      so deployment still succeeds.
+      so deployment still succeeds without <code>manage</code> privilege.
     </p>
   </div>
 

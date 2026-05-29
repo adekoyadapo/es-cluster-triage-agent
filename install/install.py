@@ -296,23 +296,23 @@ def show_api_key_guide() -> None:
   You need {c(BOLD, "one")} API key with both Kibana and Elasticsearch access.
   Paste this command in Kibana → Management → Dev Tools:
 
-  {c(CYAN, "Single installer API key")} — deploys components and reads/aliases monitoring data
+  {c(CYAN, "Single installer API key")} — deploys components and reads monitoring data
 
   {c(DIM, 'POST /_security/api_key')}
   {c(DIM, '{')}
   {c(DIM, '  "name": "es-cluster-triage-installer",')}
   {c(DIM, '  "role_descriptors": {')}
   {c(DIM, '    "triage-installer": {')}
-  {c(DIM, '      "cluster": ["monitor"],')}
+  {c(DIM, '      "cluster": ["monitor", "monitor_inference"],')}
   {c(DIM, '      "indices": [{')}
   {c(DIM, '        "names": ["<your-monitoring-pattern>", "<your-log-pattern>"],')}
-  {c(DIM, '        "privileges": ["manage", "read", "view_index_metadata"],')}
+  {c(DIM, '        "privileges": ["read", "view_index_metadata"],')}
   {c(DIM, '        "allow_restricted_indices": true')}
   {c(DIM, '      }],')}
   {c(DIM, '      "applications": [{')}
   {c(DIM, '        "application": "kibana-.kibana",')}
-  {c(DIM, '        "privileges": ["all"],')}
-  {c(DIM, '        "resources": ["*"]')}
+  {c(DIM, '        "privileges": ["feature_agentBuilder.all", "feature_actions.read"],')}
+  {c(DIM, '        "resources": ["space:default"]')}
   {c(DIM, '      }]')}
   {c(DIM, '    }')}
   {c(DIM, '  }')}
@@ -321,11 +321,14 @@ def show_api_key_guide() -> None:
   {c(YELLOW, "Notes:")}
   · Replace <your-monitoring-pattern> and <your-log-pattern> with the actual
     index names you'll enter in step 5 (e.g. .monitoring-es-8-mb, filebeat-9.3.4)
-  · {c(BOLD, 'allow_restricted_indices: true')} is required — monitoring indices
-    (.monitoring-es-*) are restricted/system indices in ES 8.x; without this flag
-    the manage privilege is silently scoped away from them
-  · The key is capped to the creating user's own privileges (ES intersection rule).
-    Create this key as {c(BOLD, 'elastic')} or a superuser to get full manage access.
+  · Replace {c(BOLD, '"space:default"')} with {c(BOLD, '"space:<your-namespace>"')} if you're installing
+    into a custom Kibana space (e.g. "space:cluster-triage")
+  · {c(BOLD, 'monitor_inference')} is required for the agent to call the Elasticsearch Inference
+    API (used by the built-in tools and ES|QL query generation)
+  · {c(BOLD, 'feature_agentBuilder.all')} is the correct application privilege name for API keys
+    (the UI shows it as "Agent Builder: All" under Analytics)
+  · {c(BOLD, 'allow_restricted_indices: true')} is needed when your monitoring pattern covers
+    restricted indices like .monitoring-es-*; omit it if using metrics-elasticsearch.*
   · Using username/password (elastic or superuser) also works — no key needed
     """)
 
@@ -954,7 +957,7 @@ def stream_agent_chat(
 
     path = space_path(space_id, "/api/agent_builder/converse/async")
     url = f"{kb_url}{path}"
-    payload = json.dumps({"agent_id": agent_id, "message": message}).encode("utf-8")
+    payload = json.dumps({"agent_id": agent_id, "input": message}).encode("utf-8")
     req = Request(
         url,
         data=payload,
