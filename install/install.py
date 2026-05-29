@@ -82,8 +82,8 @@ def close_log() -> None:
 def print_banner() -> None:
     print()
     print(c(CYAN, "╔══════════════════════════════════════════════════════════════╗"))
-    print(c(CYAN, "║") + c(BOLD + WHITE, "  Elasticsearch Cluster Triage Agent — Installer v1.0       ") + c(CYAN, "║"))
-    print(c(CYAN, "║") + c(DIM,          "  Deploys AI-powered triage to any Kibana Monitoring cluster ") + c(CYAN, "║"))
+    print(c(CYAN, "║") + c(BOLD + WHITE, "  Elasticsearch Cluster Triage Agent — Installer v1.0       ") + c(CYAN, "  ║"))
+    print(c(CYAN, "║") + c(DIM,          "  Deploys AI-powered triage to any Kibana Monitoring cluster ") + c(CYAN, " ║"))
     print(c(CYAN, "╚══════════════════════════════════════════════════════════════╝"))
     print()
 
@@ -234,6 +234,19 @@ def es_request(
         raise RuntimeError(f"Connection error: {exc.reason}") from exc
 
 
+def resolve_concrete_indices(es_url: str, hdr: tuple[str, str], pattern: str) -> list[str]:
+    """Return concrete index names matching pattern (wildcards expanded, open indices only)."""
+    try:
+        result = es_request(
+            es_url, hdr, "GET",
+            f"/_resolve/index/{pattern}?expand_wildcards=open",
+            timeout=15,
+        )
+        return [idx["name"] for idx in result.get("indices", [])]
+    except RuntimeError:
+        return []
+
+
 def space_path(space_id: str, path: str) -> str:
     if space_id == "default":
         return path
@@ -293,16 +306,21 @@ def show_api_key_guide() -> None:
     print(f"""
   {c(BOLD + YELLOW, "API Key Setup")}
   {c(DIM, "─" * 56)}
-  Paste these commands in Kibana → Management → Dev Tools:
+  You need {c(BOLD, "one")} API key with both Kibana and Elasticsearch access.
+  Paste this command in Kibana → Management → Dev Tools:
 
-  {c(CYAN, "1. Kibana API key")} — deploys agents, skills, tools & workflow
+  {c(CYAN, "Single installer API key")} — deploys components and reads/aliases monitoring data
 
   {c(DIM, 'POST /_security/api_key')}
   {c(DIM, '{')}
   {c(DIM, '  "name": "es-cluster-triage-installer",')}
   {c(DIM, '  "role_descriptors": {')}
-  {c(DIM, '    "deployer": {')}
+  {c(DIM, '    "triage-installer": {')}
   {c(DIM, '      "cluster": ["monitor"],')}
+  {c(DIM, '      "indices": [{')}
+  {c(DIM, '        "names": ["<your-monitoring-pattern>", "<your-log-pattern>"],')}
+  {c(DIM, '        "privileges": ["manage", "read", "view_index_metadata"]')}
+  {c(DIM, '      }],')}
   {c(DIM, '      "applications": [{')}
   {c(DIM, '        "application": "kibana-.kibana",')}
   {c(DIM, '        "privileges": ["all"],')}
@@ -312,24 +330,11 @@ def show_api_key_guide() -> None:
   {c(DIM, '  }')}
   {c(DIM, '}')}
 
-  {c(CYAN, "2. Elasticsearch API key")} — queries monitoring datastreams (ES|QL)
-
-  {c(DIM, 'POST /_security/api_key')}
-  {c(DIM, '{')}
-  {c(DIM, '  "name": "es-cluster-triage-esql",')}
-  {c(DIM, '  "role_descriptors": {')}
-  {c(DIM, '    "monitoring_reader": {')}
-  {c(DIM, '      "indices": [{')}
-  {c(DIM, '        "names": ["<your-monitoring-pattern>", "<your-log-pattern>"],')}
-  {c(DIM, '        "privileges": ["read", "view_index_metadata"]')}
-  {c(DIM, '      }]')}
-  {c(DIM, '    }')}
-  {c(DIM, '  }')}
-  {c(DIM, '}')}
-
-  {c(YELLOW, "Tip:")} Replace <your-monitoring-pattern> and <your-log-pattern> with the
-  datastream patterns you'll enter in step 5 (e.g. .monitoring-es-* and elastic-cloud-logs-8).
-  You can also use username/password (elastic or superuser) — no separate ES API key needed.
+  {c(YELLOW, "Notes:")}
+  · Replace <your-monitoring-pattern> and <your-log-pattern> with the patterns
+    you'll enter in step 5 (e.g. .monitoring-es-8-mb and filebeat-*)
+  · Use {c(BOLD, 'manage')} (not just read) — the installer creates index aliases
+  · Using username/password (elastic or superuser) also works — no key needed
     """)
 
 
@@ -539,39 +544,97 @@ def collect_and_validate_datastreams(
         except RuntimeError as exc:
             warn(f"ES|QL smoke test: {exc}")
 
-    # ── Create alias ──────────────────────────────────────────────────────────
-    alias_name = "es-triage-monitoring"
-    info(f"Creating alias '{alias_name}' → {monitoring_ds}")
-    try:
-        es_request(es_url, hdr, "POST", "/_aliases", body={
-            "actions": [{"add": {"index": monitoring_ds, "alias": alias_name, "is_write_index": False}}]
-        }, timeout=20)
-        ok(f"Alias '{alias_name}' created")
-    except RuntimeError as exc:
-        exc_str = str(exc)
-        if "index_not_found" in exc_str.lower():
-            warn(f"Alias skipped — '{monitoring_ds}' does not exist yet")
-        elif "HTTP 400" in exc_str and "already" in exc_str.lower():
-            ok(f"Alias '{alias_name}' already exists")
+    # ── Create monitoring alias (es-monitoring) ──────────────────────────────
+    monitoring_alias = "es-monitoring"
+    monitoring_alias_created = False
+
+    info("Resolving monitoring indices…")
+    monitoring_indices = resolve_concrete_indices(es_url, hdr, monitoring_ds)
+
+    # Also look for the Kibana monitoring sibling (e.g. .monitoring-kibana-8-mb)
+    kibana_sibling = re.sub(r'\.monitoring-es', '.monitoring-kibana', monitoring_ds)
+    if kibana_sibling != monitoring_ds:
+        kb_idx = resolve_concrete_indices(es_url, hdr, kibana_sibling)
+        if kb_idx:
+            info(f"Found Kibana monitoring sibling: {', '.join(kb_idx)}")
+            # Deduplicate while preserving order
+            seen: set[str] = set(monitoring_indices)
+            for idx in kb_idx:
+                if idx not in seen:
+                    monitoring_indices.append(idx)
+                    seen.add(idx)
+
+    if monitoring_indices:
+        info(f"Found {len(monitoring_indices)} index(es): {', '.join(monitoring_indices[:4])}")
+        try:
+            actions = [
+                {"add": {"index": idx, "alias": monitoring_alias, "is_write_index": False}}
+                for idx in monitoring_indices
+            ]
+            es_request(es_url, hdr, "POST", "/_aliases", body={"actions": actions}, timeout=20)
+            preview = ", ".join(monitoring_indices[:3]) + ("…" if len(monitoring_indices) > 3 else "")
+            ok(f"Alias '{monitoring_alias}' → {preview}")
+            monitoring_alias_created = True
+        except RuntimeError as exc:
+            exc_str = str(exc)
+            if "already" in exc_str.lower() or "HTTP 400" in exc_str:
+                ok(f"Alias '{monitoring_alias}' already exists")
+                monitoring_alias_created = True
+            else:
+                warn(f"Could not create alias '{monitoring_alias}': {exc}")
+    else:
+        warn(f"No indices found for '{monitoring_ds}' — alias '{monitoring_alias}' skipped (deploy will still proceed)")
+
+    # ── Create log alias (elastic-cloud-logs-8) ───────────────────────────────
+    log_alias = "elastic-cloud-logs-8"
+    log_alias_created = False
+
+    if log_ds == "elastic-cloud-logs-8":
+        ok(f"Log pattern is '{log_alias}' — no alias needed")
+        log_alias_created = True
+    else:
+        info("Resolving log indices…")
+        log_indices = resolve_concrete_indices(es_url, hdr, log_ds)
+        if log_indices:
+            info(f"Found {len(log_indices)} log index(es): {', '.join(log_indices[:4])}")
+            try:
+                actions = [
+                    {"add": {"index": idx, "alias": log_alias, "is_write_index": False}}
+                    for idx in log_indices
+                ]
+                es_request(es_url, hdr, "POST", "/_aliases", body={"actions": actions}, timeout=20)
+                preview = ", ".join(log_indices[:3]) + ("…" if len(log_indices) > 3 else "")
+                ok(f"Alias '{log_alias}' → {preview}")
+                log_alias_created = True
+            except RuntimeError as exc:
+                exc_str = str(exc)
+                if "already" in exc_str.lower() or "HTTP 400" in exc_str:
+                    ok(f"Alias '{log_alias}' already exists")
+                    log_alias_created = True
+                else:
+                    warn(f"Could not create alias '{log_alias}': {exc}")
+                    info(f"Log tools will query '{log_ds}' directly — ensure your API key covers it")
         else:
-            warn(f"Alias: {exc}")
+            warn(f"No indices found for '{log_ds}' — alias '{log_alias}' skipped")
 
     # ── API key coverage reminder ─────────────────────────────────────────────
-    print(f"""
+    if not monitoring_alias_created or (not log_alias_created and log_ds != "elastic-cloud-logs-8"):
+        print(f"""
   {c(YELLOW, "API key coverage check")}
-  If you created a dedicated Elasticsearch API key (not using superuser),
-  make sure it includes read access to these patterns:
+  One or more aliases could not be created. Make sure your API key has
+  {c(BOLD, "manage")} + {c(BOLD, "read")} + {c(BOLD, "view_index_metadata")} on these patterns:
 
     {c(BOLD, monitoring_ds)}  ← monitoring tools
     {c(BOLD, log_ds)}  ← error log and audit security tools
-
-  Reissue the key if the patterns above don't match what you granted.
-    """)
+        """)
 
     return {
         "monitoring_ds": monitoring_ds,
         "log_ds": log_ds,
-        "alias_name": alias_name,
+        "monitoring_alias": monitoring_alias,
+        "monitoring_alias_created": monitoring_alias_created,
+        "log_alias": log_alias,
+        "log_alias_created": log_alias_created,
         "doc_count": monitoring_doc_count,
     }
 
@@ -586,7 +649,8 @@ def save_credentials(creds: dict[str, str], namespace: str, ds_info: dict[str, s
         "auth_type": creds.get("AUTH_TYPE", "apikey"),
         "monitoring_ds": ds_info["monitoring_ds"],
         "log_ds": ds_info["log_ds"],
-        "alias_name": ds_info["alias_name"],
+        "monitoring_alias": ds_info["monitoring_alias"],
+        "log_alias": ds_info["log_alias"],
     }
     CREDS_FILE.write_text(json.dumps(data, indent=2))
     CREDS_FILE.chmod(0o600)
@@ -620,21 +684,23 @@ def provision_connector(kb_url: str, hdr: tuple[str, str], space_id: str, webhoo
 
 def deploy_workflow_yaml(
     kb_url: str, hdr: tuple[str, str], namespace: str,
-    workflow_id: str, yaml_text: str
+    workflow_id: str, yaml_text: str, wf_name: str = "",
 ) -> None:
     """POST first, fall back to PUT on 409 (Kibana workflow IDs are globally unique)."""
     wf_path = space_path(namespace, f"/api/workflows/workflow/{workflow_id}")
+    body: dict[str, Any] = {"id": workflow_id, "yaml": yaml_text}
+    if wf_name:
+        body["name"] = wf_name
     try:
-        kibana_request(
-            kb_url, hdr, "POST",
-            space_path(namespace, "/api/workflows/workflow"),
-            body={"id": workflow_id, "yaml": yaml_text},
-        )
+        kibana_request(kb_url, hdr, "POST", space_path(namespace, "/api/workflows/workflow"), body=body)
     except RuntimeError as exc:
         if "HTTP 409" not in str(exc):
             raise
+        put_body: dict[str, Any] = {"yaml": yaml_text}
+        if wf_name:
+            put_body["name"] = wf_name
         try:
-            kibana_request(kb_url, hdr, "PUT", wf_path, body={"yaml": yaml_text})
+            kibana_request(kb_url, hdr, "PUT", wf_path, body=put_body)
         except RuntimeError as put_exc:
             warn(f"Workflow update: {put_exc}")
 
@@ -667,7 +733,8 @@ def deploy_all(
         "agent_id": None,
         "workflows": [],
         "connector_id": None,
-        "alias": ds_info.get("alias_name"),
+        "monitoring_alias": ds_info.get("monitoring_alias", "es-monitoring"),
+        "log_alias": ds_info.get("log_alias", "elastic-cloud-logs-8"),
     }
 
     total_deploy = len(tools) + len(skills) + 1  # tools + skills + agent (workflows added later)
@@ -678,28 +745,25 @@ def deploy_all(
         done += 1
         progress_bar(label, done, total_deploy)
 
-    # ── Patch tool queries for custom datastreams ─────────────────────────────
-    monitoring_ds = ds_info["monitoring_ds"]
+    # ── Patch tool queries to use aliases ─────────────────────────────────────
+    monitoring_alias = ds_info.get("monitoring_alias", "es-monitoring")
     log_ds = ds_info["log_ds"]
-    patch_monitoring = monitoring_ds not in (".monitoring-es-*", ".monitoring-es-8-mb")
-    patch_logs = log_ds != "elastic-cloud-logs-8"
+    log_alias = ds_info.get("log_alias", "elastic-cloud-logs-8")
+    log_alias_created = ds_info.get("log_alias_created", False)
 
-    if patch_monitoring or patch_logs:
-        for tool in tools:
-            cfg = tool.get("configuration", {})
-            query = cfg.get("query", "")
-            if patch_monitoring:
-                query = re.sub(r'FROM \.monitoring-es-\S+', f"FROM {monitoring_ds}", query)
-            if patch_logs:
-                query = query.replace("FROM elastic-cloud-logs-8", f"FROM {log_ds}")
-            cfg["query"] = query
-            tool["configuration"] = cfg
-        msgs = []
-        if patch_monitoring:
-            msgs.append(f"monitoring → {monitoring_ds}")
-        if patch_logs:
-            msgs.append(f"logs/audit → {log_ds}")
-        ok(f"Tool queries patched: {', '.join(msgs)}")
+    for tool in tools:
+        cfg = tool.get("configuration", {})
+        query = cfg.get("query", "")
+        # Always rewrite monitoring pattern → es-monitoring alias
+        query = re.sub(r'FROM \.monitoring-es-\S+', f"FROM {monitoring_alias}", query)
+        # Log tools: keep elastic-cloud-logs-8 if alias was created; otherwise use raw pattern
+        if not log_alias_created and log_ds != "elastic-cloud-logs-8":
+            query = query.replace("FROM elastic-cloud-logs-8", f"FROM {log_ds}")
+        cfg["query"] = query
+        tool["configuration"] = cfg
+
+    log_target = log_alias if log_alias_created else log_ds
+    ok(f"Tool queries updated: monitoring → {monitoring_alias}, logs → {log_target}")
 
     # ── Tear down existing ─────────────────────────────────────────────────────
     info("Removing previous installation if any…")
@@ -788,7 +852,8 @@ def deploy_workflows(
         wf_id = f"{namespace}-{WORKFLOW_ID_SUFFIX}-alert" if namespace != "default" else f"{WORKFLOW_ID_SUFFIX}-alert"
         delete_if_exists(kb_url, hdr, space_path(namespace, f"/api/workflows/workflow/{wf_id}"))
         info(f"Deploying alert workflow: {wf_id}")
-        deploy_workflow_yaml(kb_url, hdr, namespace, wf_id, render_template(WORKFLOW_ALERT_TEMPLATE))
+        deploy_workflow_yaml(kb_url, hdr, namespace, wf_id, render_template(WORKFLOW_ALERT_TEMPLATE),
+                             wf_name="ES Cluster Triage Summary")
         ok(f"Alert workflow deployed: {wf_id}")
         deployed_wfs.append(wf_id)
 
@@ -796,14 +861,21 @@ def deploy_workflows(
         print(f"""
   {c(CYAN, "Schedule interval")}
   How often the scheduled triage should run.
-  Examples: {c(DIM, '1h')}  {c(DIM, '4h')}  {c(DIM, '24h')}  {c(DIM, '30m')}
+  Examples: {c(DIM, '30m')}  {c(DIM, '1h')}  {c(DIM, '4h')}  {c(DIM, '24h')}
         """)
         interval = ask("Interval", "1h").strip()
+        # Normalize bare number → hours (e.g. "24" → "24h")
+        if re.match(r'^\d+$', interval):
+            interval = f"{interval}h"
+            info(f"Interval normalized to '{interval}'")
+        if not re.match(r'^\d+[smhd]$', interval):
+            warn(f"Interval '{interval}' may not be valid — expected format: 30m, 1h, 4h, 24h")
         wf_id = f"{namespace}-{WORKFLOW_ID_SUFFIX}-scheduled" if namespace != "default" else f"{WORKFLOW_ID_SUFFIX}-scheduled"
         delete_if_exists(kb_url, hdr, space_path(namespace, f"/api/workflows/workflow/{wf_id}"))
         info(f"Deploying scheduled workflow: {wf_id} (every {interval})")
         yaml = render_template(WORKFLOW_SCHEDULED_TEMPLATE).replace("__SCHEDULE_INTERVAL__", interval)
-        deploy_workflow_yaml(kb_url, hdr, namespace, wf_id, yaml)
+        deploy_workflow_yaml(kb_url, hdr, namespace, wf_id, yaml,
+                             wf_name="ES Cluster Triage Scheduled")
         ok(f"Scheduled workflow deployed: {wf_id} — runs every {interval}")
         deployed_wfs.append(wf_id)
 
@@ -1030,8 +1102,8 @@ def print_summary(creds: dict[str, str], namespace: str, ds_info: dict[str, str]
   {c(CYAN, "Skills:")}      {len(installed_data.get('skills', []))} skill groups
   {c(CYAN, "Agent:")}       {installed_data.get('agent_id', AGENT_ID)}
   {c(CYAN, "Workflows:")}   {', '.join(wfs) if wfs else 'none (agent only)'}
-  {c(CYAN, "Monitoring:")}  {ds_info['monitoring_ds']}
-  {c(CYAN, "Alias:")}       {ds_info['alias_name']}
+  {c(CYAN, "Monitoring:")}  {ds_info['monitoring_ds']} → alias: {ds_info['monitoring_alias']}
+  {c(CYAN, "Logs:")}        {ds_info['log_ds']} → alias: {ds_info['log_alias']}
 
   {c(CYAN, "Local files:")}
   · {INSTALLED_FILE}

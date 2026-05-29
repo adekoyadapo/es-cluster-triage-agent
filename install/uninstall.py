@@ -207,7 +207,7 @@ def main() -> int:
 
     print()
     print(c(CYAN, "╔══════════════════════════════════════════════════════════════╗"))
-    print(c(CYAN, "║") + c(BOLD + WHITE, "  Elasticsearch Cluster Triage Agent — Uninstaller v1.0     ") + c(CYAN, "║"))
+    print(c(CYAN, "║") + c(BOLD + WHITE, "  Elasticsearch Cluster Triage Agent — Uninstaller v1.0     ") + c(CYAN, " ║"))
     print(c(CYAN, "╚══════════════════════════════════════════════════════════════╝"))
     print()
 
@@ -233,7 +233,9 @@ def main() -> int:
         [installed["workflow_id"]] if installed.get("workflow_id") else []
     )
     connector_id = installed.get("connector_id")
-    alias = installed.get("alias")
+    # Support both old single alias and new dual-alias format
+    monitoring_alias = installed.get("monitoring_alias") or installed.get("alias")
+    log_alias = installed.get("log_alias")
 
     print(f"  {c(CYAN, 'Installed at:')} {installed.get('installed_at', 'unknown')}")
     print(f"  {c(CYAN, 'Kibana space:')} {namespace}")
@@ -247,8 +249,10 @@ def main() -> int:
         print(f"  · Workflow: {wid}")
     if connector_id:
         print(f"  · Slack connector: {connector_id}")
-    if alias:
-        print(f"  · ES alias: {alias}")
+    if monitoring_alias:
+        print(f"  · ES alias: {monitoring_alias}")
+    if log_alias and log_alias != "elastic-cloud-logs-8":
+        print(f"  · ES alias: {log_alias}")
 
     if not confirm("Proceed with uninstall?", False):
         print("  Aborted.")
@@ -287,17 +291,18 @@ def main() -> int:
     if connector_id:
         delete_item(kb_url, hdr, space_path(namespace, f"/api/actions/connector/{connector_id}"), f"connector/{connector_id}")
 
-    # ES alias
-    if alias and es_url:
-        info(f"Removing ES alias '{alias}'...")
-        try:
-            es_request(es_url, hdr, "DELETE", f"/_alias/{alias}", timeout=15)
-            ok(f"Alias '{alias}' removed")
-        except RuntimeError as exc:
-            if "HTTP 404" in str(exc):
-                warn(f"Alias '{alias}' already gone")
-            else:
-                warn(f"Alias removal: {exc}")
+    # ES aliases
+    for alias_name in filter(None, [monitoring_alias, log_alias if log_alias != "elastic-cloud-logs-8" else None]):
+        if alias_name and es_url:
+            info(f"Removing ES alias '{alias_name}'...")
+            try:
+                es_request(es_url, hdr, "DELETE", f"/_alias/{alias_name}", timeout=15)
+                ok(f"Alias '{alias_name}' removed")
+            except RuntimeError as exc:
+                if "HTTP 404" in str(exc):
+                    warn(f"Alias '{alias_name}' already gone")
+                else:
+                    warn(f"Alias removal: {exc}")
 
     # Clean up local install files
     print()

@@ -124,7 +124,7 @@ def build_auth_from_creds(creds_data: dict[str, Any]) -> tuple[str, str]:
 def main() -> int:
     print()
     print(c(CYAN, "╔══════════════════════════════════════════════════════════════╗"))
-    print(c(CYAN, "║") + c(BOLD + WHITE, "  Elasticsearch Cluster Triage Agent — Deployment Verifier  ") + c(CYAN, "║"))
+    print(c(CYAN, "║") + c(BOLD + WHITE, "  Elasticsearch Cluster Triage Agent — Deployment Verifier  ") + c(CYAN, "  ║"))
     print(c(CYAN, "╚══════════════════════════════════════════════════════════════╝"))
     print()
 
