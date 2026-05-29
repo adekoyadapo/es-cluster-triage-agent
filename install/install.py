@@ -234,19 +234,6 @@ def es_request(
         raise RuntimeError(f"Connection error: {exc.reason}") from exc
 
 
-def resolve_concrete_indices(es_url: str, hdr: tuple[str, str], pattern: str) -> list[str]:
-    """Return concrete index names matching pattern (wildcards expanded, open indices only)."""
-    try:
-        result = es_request(
-            es_url, hdr, "GET",
-            f"/_resolve/index/{pattern}?expand_wildcards=open",
-            timeout=15,
-        )
-        return [idx["name"] for idx in result.get("indices", [])]
-    except RuntimeError:
-        return []
-
-
 def space_path(space_id: str, path: str) -> str:
     if space_id == "default":
         return path
@@ -545,45 +532,41 @@ def collect_and_validate_datastreams(
             warn(f"ES|QL smoke test: {exc}")
 
     # ── Create monitoring alias (es-monitoring) ──────────────────────────────
+    # Use the pattern directly — POST /_aliases supports wildcards, no resolve needed.
     monitoring_alias = "es-monitoring"
     monitoring_alias_created = False
 
-    info("Resolving monitoring indices…")
-    monitoring_indices = resolve_concrete_indices(es_url, hdr, monitoring_ds)
+    info(f"Creating alias '{monitoring_alias}' → {monitoring_ds}")
+    try:
+        es_request(es_url, hdr, "POST", "/_aliases", body={
+            "actions": [{"add": {"index": monitoring_ds, "alias": monitoring_alias, "is_write_index": False}}]
+        }, timeout=20)
+        ok(f"Alias '{monitoring_alias}' → {monitoring_ds}")
+        monitoring_alias_created = True
+    except RuntimeError as exc:
+        exc_str = str(exc)
+        if "already" in exc_str.lower() or ("HTTP 400" in exc_str and "alias" in exc_str.lower()):
+            ok(f"Alias '{monitoring_alias}' already exists")
+            monitoring_alias_created = True
+        elif "index_not_found" in exc_str.lower():
+            warn(f"No index matching '{monitoring_ds}' — alias skipped (deploy will still proceed)")
+        else:
+            warn(f"Could not create alias '{monitoring_alias}': {exc}")
 
-    # Also look for the Kibana monitoring sibling (e.g. .monitoring-kibana-8-mb)
+    # Try adding the Kibana monitoring sibling to the same alias (e.g. .monitoring-kibana-8-mb)
     kibana_sibling = re.sub(r'\.monitoring-es', '.monitoring-kibana', monitoring_ds)
     if kibana_sibling != monitoring_ds:
-        kb_idx = resolve_concrete_indices(es_url, hdr, kibana_sibling)
-        if kb_idx:
-            info(f"Found Kibana monitoring sibling: {', '.join(kb_idx)}")
-            # Deduplicate while preserving order
-            seen: set[str] = set(monitoring_indices)
-            for idx in kb_idx:
-                if idx not in seen:
-                    monitoring_indices.append(idx)
-                    seen.add(idx)
-
-    if monitoring_indices:
-        info(f"Found {len(monitoring_indices)} index(es): {', '.join(monitoring_indices[:4])}")
         try:
-            actions = [
-                {"add": {"index": idx, "alias": monitoring_alias, "is_write_index": False}}
-                for idx in monitoring_indices
-            ]
-            es_request(es_url, hdr, "POST", "/_aliases", body={"actions": actions}, timeout=20)
-            preview = ", ".join(monitoring_indices[:3]) + ("…" if len(monitoring_indices) > 3 else "")
-            ok(f"Alias '{monitoring_alias}' → {preview}")
-            monitoring_alias_created = True
+            es_request(es_url, hdr, "POST", "/_aliases", body={
+                "actions": [{"add": {"index": kibana_sibling, "alias": monitoring_alias, "is_write_index": False}}]
+            }, timeout=15)
+            ok(f"Added Kibana monitoring sibling '{kibana_sibling}' to alias")
         except RuntimeError as exc:
             exc_str = str(exc)
-            if "already" in exc_str.lower() or "HTTP 400" in exc_str:
-                ok(f"Alias '{monitoring_alias}' already exists")
-                monitoring_alias_created = True
+            if "index_not_found" in exc_str.lower() or "already" in exc_str.lower():
+                pass  # Not present or already added — both are fine
             else:
-                warn(f"Could not create alias '{monitoring_alias}': {exc}")
-    else:
-        warn(f"No indices found for '{monitoring_ds}' — alias '{monitoring_alias}' skipped (deploy will still proceed)")
+                info(f"Kibana sibling alias skipped: {exc_str[:80]}")
 
     # ── Create log alias (elastic-cloud-logs-8) ───────────────────────────────
     log_alias = "elastic-cloud-logs-8"
@@ -593,29 +576,23 @@ def collect_and_validate_datastreams(
         ok(f"Log pattern is '{log_alias}' — no alias needed")
         log_alias_created = True
     else:
-        info("Resolving log indices…")
-        log_indices = resolve_concrete_indices(es_url, hdr, log_ds)
-        if log_indices:
-            info(f"Found {len(log_indices)} log index(es): {', '.join(log_indices[:4])}")
-            try:
-                actions = [
-                    {"add": {"index": idx, "alias": log_alias, "is_write_index": False}}
-                    for idx in log_indices
-                ]
-                es_request(es_url, hdr, "POST", "/_aliases", body={"actions": actions}, timeout=20)
-                preview = ", ".join(log_indices[:3]) + ("…" if len(log_indices) > 3 else "")
-                ok(f"Alias '{log_alias}' → {preview}")
+        info(f"Creating alias '{log_alias}' → {log_ds}")
+        try:
+            es_request(es_url, hdr, "POST", "/_aliases", body={
+                "actions": [{"add": {"index": log_ds, "alias": log_alias, "is_write_index": False}}]
+            }, timeout=20)
+            ok(f"Alias '{log_alias}' → {log_ds}")
+            log_alias_created = True
+        except RuntimeError as exc:
+            exc_str = str(exc)
+            if "already" in exc_str.lower() or ("HTTP 400" in exc_str and "alias" in exc_str.lower()):
+                ok(f"Alias '{log_alias}' already exists")
                 log_alias_created = True
-            except RuntimeError as exc:
-                exc_str = str(exc)
-                if "already" in exc_str.lower() or "HTTP 400" in exc_str:
-                    ok(f"Alias '{log_alias}' already exists")
-                    log_alias_created = True
-                else:
-                    warn(f"Could not create alias '{log_alias}': {exc}")
-                    info(f"Log tools will query '{log_ds}' directly — ensure your API key covers it")
-        else:
-            warn(f"No indices found for '{log_ds}' — alias '{log_alias}' skipped")
+            elif "index_not_found" in exc_str.lower():
+                warn(f"No index matching '{log_ds}' — alias '{log_alias}' skipped")
+            else:
+                warn(f"Could not create alias '{log_alias}': {exc}")
+                info(f"Log tools will query '{log_ds}' directly — ensure your API key covers it")
 
     # ── API key coverage reminder ─────────────────────────────────────────────
     if not monitoring_alias_created or (not log_alias_created and log_ds != "elastic-cloud-logs-8"):
@@ -848,14 +825,23 @@ def deploy_workflows(
         yaml = yaml.replace("__AGENT_ID__", deployed_agent_id)
         return yaml
 
+    def deploy_and_verify_workflow(wf_id: str, yaml_text: str, wf_name: str) -> bool:
+        delete_if_exists(kb_url, hdr, space_path(namespace, f"/api/workflows/workflow/{wf_id}"))
+        deploy_workflow_yaml(kb_url, hdr, namespace, wf_id, yaml_text, wf_name=wf_name)
+        # Verify it actually landed — a YAML parse failure returns 200 but may not persist
+        wf_data = get_if_exists(kb_url, hdr, space_path(namespace, f"/api/workflows/workflow/{wf_id}"))
+        if wf_data:
+            returned_name = wf_data.get("name") or wf_name
+            ok(f"Workflow '{returned_name}' created ✓  ({wf_id})")
+            return True
+        warn(f"Workflow '{wf_id}' POST succeeded but is not retrievable — check YAML syntax in Kibana")
+        return False
+
     if wf_choice in ("1", "3"):
         wf_id = f"{namespace}-{WORKFLOW_ID_SUFFIX}-alert" if namespace != "default" else f"{WORKFLOW_ID_SUFFIX}-alert"
-        delete_if_exists(kb_url, hdr, space_path(namespace, f"/api/workflows/workflow/{wf_id}"))
         info(f"Deploying alert workflow: {wf_id}")
-        deploy_workflow_yaml(kb_url, hdr, namespace, wf_id, render_template(WORKFLOW_ALERT_TEMPLATE),
-                             wf_name="ES Cluster Triage Summary")
-        ok(f"Alert workflow deployed: {wf_id}")
-        deployed_wfs.append(wf_id)
+        if deploy_and_verify_workflow(wf_id, render_template(WORKFLOW_ALERT_TEMPLATE), "ES Cluster Triage Summary"):
+            deployed_wfs.append(wf_id)
 
     if wf_choice in ("2", "3"):
         print(f"""
@@ -871,13 +857,11 @@ def deploy_workflows(
         if not re.match(r'^\d+[smhd]$', interval):
             warn(f"Interval '{interval}' may not be valid — expected format: 30m, 1h, 4h, 24h")
         wf_id = f"{namespace}-{WORKFLOW_ID_SUFFIX}-scheduled" if namespace != "default" else f"{WORKFLOW_ID_SUFFIX}-scheduled"
-        delete_if_exists(kb_url, hdr, space_path(namespace, f"/api/workflows/workflow/{wf_id}"))
         info(f"Deploying scheduled workflow: {wf_id} (every {interval})")
-        yaml = render_template(WORKFLOW_SCHEDULED_TEMPLATE).replace("__SCHEDULE_INTERVAL__", interval)
-        deploy_workflow_yaml(kb_url, hdr, namespace, wf_id, yaml,
-                             wf_name="ES Cluster Triage Scheduled")
-        ok(f"Scheduled workflow deployed: {wf_id} — runs every {interval}")
-        deployed_wfs.append(wf_id)
+        yaml_text = render_template(WORKFLOW_SCHEDULED_TEMPLATE).replace("__SCHEDULE_INTERVAL__", interval)
+        if deploy_and_verify_workflow(wf_id, yaml_text, "ES Cluster Triage Scheduled"):
+            deployed_wfs.append(wf_id)
+            ok(f"Scheduled run: every {interval}")
 
     if wf_choice == "4":
         info("Skipping workflow — agent deployed with no workflow trigger")
@@ -942,6 +926,85 @@ def verify_deployment(creds: dict[str, str], hdr: tuple[str, str], namespace: st
             ok(f"Workflow '{wf_id}' ✓")
         else:
             warn(f"Workflow '{wf_id}' not found")
+
+
+# ── Agent streaming chat ────────────────────────────────────────────────────────
+def stream_agent_chat(
+    kb_url: str,
+    hdr: tuple[str, str],
+    space_id: str,
+    agent_id: str,
+    message: str,
+) -> bool:
+    """POST a message to the Kibana Agent Builder and stream SSE chunks to stdout."""
+    from urllib.error import HTTPError as _HTTPError, URLError as _URLError
+
+    path = space_path(space_id, f"/api/agent_builder/agents/{agent_id}/chat")
+    url = f"{kb_url}{path}"
+    payload = json.dumps({"message": message}).encode("utf-8")
+    req = Request(
+        url,
+        data=payload,
+        headers={
+            "Accept": "text/event-stream",
+            "Content-Type": "application/json",
+            "kbn-xsrf": "true",
+            "x-elastic-internal-origin": "Kibana",
+            hdr[0]: hdr[1],
+        },
+        method="POST",
+    )
+    log(f"  KB POST (stream) {url}")
+    try:
+        with urlopen(req, timeout=180) as resp:
+            log(f"  → {resp.status} streaming")
+            full_text = ""
+            buf = b""
+            while True:
+                chunk = resp.read(512)
+                if not chunk:
+                    break
+                buf += chunk
+                while b"\n" in buf:
+                    line_bytes, buf = buf.split(b"\n", 1)
+                    line = line_bytes.decode("utf-8", "replace").rstrip("\r")
+                    if not line.startswith("data:"):
+                        continue
+                    data_str = line[5:].strip()
+                    if not data_str or data_str == "[DONE]":
+                        continue
+                    try:
+                        obj = json.loads(data_str)
+                        text = (
+                            obj.get("content", "")
+                            or obj.get("message", "")
+                            or (obj.get("delta") or {}).get("content", "")
+                            or obj.get("text", "")
+                        )
+                        if text:
+                            print(text, end="", flush=True)
+                            full_text += text
+                    except json.JSONDecodeError:
+                        print(data_str, end="", flush=True)
+                        full_text += data_str
+            print()
+            return bool(full_text.strip())
+    except _HTTPError as exc:
+        body = exc.read().decode("utf-8", "replace") if exc.fp else ""
+        log(f"  → HTTP {exc.code}: {body[:300]}")
+        if exc.code == 404:
+            warn("Agent chat endpoint not found — try chatting directly in the Kibana Agent Builder UI")
+        elif exc.code == 403:
+            warn("Permission denied on agent chat — check your Kibana API key privileges")
+        else:
+            warn(f"Agent chat HTTP {exc.code}: {body[:120]}")
+        return False
+    except _URLError as exc:
+        warn(f"Agent chat connection error: {exc.reason}")
+        return False
+    except Exception as exc:
+        warn(f"Agent chat error: {exc}")
+        return False
 
 
 # ── [9] Live agent validation ──────────────────────────────────────────────────
@@ -1039,32 +1102,31 @@ def live_agent_validation(creds: dict[str, str], hdr: tuple[str, str], namespace
                 print()
                 ok(f"Live data validated — {len(values)} cluster(s) found in monitoring stream")
 
-                # Prompt user for custom query
-                print(f"\n  {c(CYAN, 'Try a custom query (optional)')}")
-                print(f"  {c(DIM, 'You can enter any ES|QL query to test. Leave blank to skip.')}")
-                custom_q = ask("ES|QL query (blank to skip)").strip()
-                if custom_q:
-                    print(f"\n  {c(DIM, 'Running…')}")
-                    try:
-                        custom_result = es_request(
-                            es_url, hdr, "POST", "/_query",
-                            body={"query": custom_q},
-                            timeout=30,
-                        )
-                        ccols = [col.get("name") for col in custom_result.get("columns", [])]
-                        cvals = custom_result.get("values", [])
-                        print(f"\n  {c(GREEN, 'Result:')} {len(cvals)} row(s) — columns: {', '.join(ccols)}")
-                        for row in cvals[:5]:
-                            row_map = dict(zip(ccols, row))
-                            print(f"  {c(DIM, str(row_map)[:120])}")
-                    except RuntimeError as exc:
-                        warn(f"Query error: {exc}")
-
         except RuntimeError as exc:
             if "index_not_found" in str(exc).lower():
                 warn("Monitoring index not found — Stack Monitoring may not be enabled")
             else:
                 warn(f"Validation query failed: {exc}")
+
+    # ── Agent chat test ───────────────────────────────────────────────────────
+    print(f"""
+  {c(CYAN, "Agent response test")}
+  Sends a question directly to the deployed agent and streams its reply.
+  The agent will call ES|QL tools against your monitoring data in real time.
+    """)
+
+    if confirm("Run agent chat test?", True):
+        sample_q = "What is the current cluster health and are there any concerns I should know about?"
+        print(f"\n  {c(BOLD, 'Question:')} {sample_q}")
+        print(f"  {c(DIM, '─' * 58)}")
+        success = stream_agent_chat(kb_url, hdr, namespace, AGENT_ID, sample_q)
+        if success:
+            print(f"  {c(DIM, '─' * 58)}")
+            ok("Agent responded — validation complete")
+        else:
+            info("Agent chat did not return a response — verify via the Kibana UI link below")
+    else:
+        info("Skipping agent chat test")
 
     # Show Kibana agent URL
     agent_url = f"{space_url}/app/agent_builder"
@@ -1072,7 +1134,7 @@ def live_agent_validation(creds: dict[str, str], hdr: tuple[str, str], namespace
   {c(CYAN + BOLD, "Open your agent in Kibana:")}
   {c(BOLD, agent_url)}
 
-  {c(DIM, 'You can chat with the agent directly in Kibana Agent Builder.')}
+  {c(DIM, 'Chat with the agent directly or connect the workflow to a monitoring rule.')}
   {c(DIM, 'Example questions:')}
   {c(DIM, '  · "What is the current cluster health?"')}
   {c(DIM, '  · "Are there any indexing failures in the last hour?"')}
