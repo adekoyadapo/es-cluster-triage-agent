@@ -954,12 +954,19 @@ def stream_agent_chat(
     agent_id: str,
     message: str,
 ) -> bool:
-    """POST a message to the Kibana Agent Builder and stream SSE chunks to stdout."""
+    """POST a message to POST /api/agent_builder/converse/async and stream SSE to stdout.
+
+    SSE event types (from Kibana Agent Builder API docs):
+      message_chunk    → {"message_id": "...", "text_chunk": "..."}
+      message_complete → {"message_id": "...", "message_content": "..."}
+      tool_call        → {"tool_call_id": "...", "tool_id": "..."}
+      round_complete   → end of response
+    """
     from urllib.error import HTTPError as _HTTPError, URLError as _URLError
 
-    path = space_path(space_id, f"/api/agent_builder/agents/{agent_id}/chat")
+    path = space_path(space_id, "/api/agent_builder/converse/async")
     url = f"{kb_url}{path}"
-    payload = json.dumps({"message": message}).encode("utf-8")
+    payload = json.dumps({"agent_id": agent_id, "message": message}).encode("utf-8")
     req = Request(
         url,
         data=payload,
@@ -978,6 +985,7 @@ def stream_agent_chat(
             log(f"  → {resp.status} streaming")
             full_text = ""
             buf = b""
+            current_event = ""
             while True:
                 chunk = resp.read(512)
                 if not chunk:
@@ -986,25 +994,34 @@ def stream_agent_chat(
                 while b"\n" in buf:
                     line_bytes, buf = buf.split(b"\n", 1)
                     line = line_bytes.decode("utf-8", "replace").rstrip("\r")
+                    if line.startswith("event:"):
+                        current_event = line[6:].strip()
+                        continue
                     if not line.startswith("data:"):
                         continue
                     data_str = line[5:].strip()
                     if not data_str or data_str == "[DONE]":
                         continue
+                    if current_event == "round_complete":
+                        break
                     try:
                         obj = json.loads(data_str)
-                        text = (
-                            obj.get("content", "")
-                            or obj.get("message", "")
-                            or (obj.get("delta") or {}).get("content", "")
-                            or obj.get("text", "")
-                        )
-                        if text:
-                            print(text, end="", flush=True)
-                            full_text += text
+                        if current_event == "message_chunk":
+                            text = obj.get("text_chunk", "")
+                            if text:
+                                print(text, end="", flush=True)
+                                full_text += text
+                        elif current_event == "message_complete":
+                            content = obj.get("message_content", "")
+                            if content and not full_text:
+                                print(content, end="", flush=True)
+                                full_text = content
+                        elif current_event == "tool_call":
+                            tool_id = obj.get("tool_id", "")
+                            if tool_id:
+                                print(f"\n  [calling tool: {tool_id}]", end="", flush=True)
                     except json.JSONDecodeError:
-                        print(data_str, end="", flush=True)
-                        full_text += data_str
+                        pass
             print()
             return bool(full_text.strip())
     except _HTTPError as exc:
@@ -1013,9 +1030,9 @@ def stream_agent_chat(
         if exc.code == 404:
             warn("Agent chat endpoint not found — try chatting directly in the Kibana Agent Builder UI")
         elif exc.code == 403:
-            warn("Permission denied on agent chat — check your Kibana API key privileges")
+            warn("Permission denied on agent chat — check your Kibana API key privileges (needs agentBuilder:read)")
         else:
-            warn(f"Agent chat HTTP {exc.code}: {body[:120]}")
+            warn(f"Agent chat HTTP {exc.code}: {body[:200]}")
         return False
     except _URLError as exc:
         warn(f"Agent chat connection error: {exc.reason}")
