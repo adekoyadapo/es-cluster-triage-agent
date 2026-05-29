@@ -1,0 +1,12 @@
+{
+  "content": "# ES Resource Pressure Triage\n\nUse this skill when the issue centers on resource exhaustion:\n\n- disk pressure or low free space\n- shard pressure or shard imbalance\n- write/search/bulk rejections\n- merge backlog or resource contention\n\n## Workflow\n\n1. Use `es-cluster-triage-disk_shard_pressure` when shard allocation or low disk space is suspected.\n2. Use `es-cluster-triage-thread_pool_rejections` when search, write, or bulk queues are backing up.\n3. Use `es-cluster-triage-node_pressure_summary` to confirm whether the pressure is localized to one or more nodes.\n4. Use `es-cluster-triage-jvm_gc_pressure` when resource exhaustion is accompanied by heap or GC symptoms.\n\n## Output guidance\n\n- Explain whether the issue is disk-driven, shard-driven, or queue-driven.\n- Identify the affected node or cluster when possible.\n- Keep the result evidence-based and concise.\n",
+  "description": "Diagnose disk pressure, shard pressure, and thread-pool rejection symptoms that point to resource exhaustion.",
+  "id": "es-cluster-triage-resource-pressure-triage",
+  "name": "ES Resource Pressure Triage",
+  "tool_ids": [
+    "es-cluster-triage-disk_shard_pressure",
+    "es-cluster-triage-thread_pool_rejections",
+    "es-cluster-triage-node_pressure_summary",
+    "es-cluster-triage-jvm_gc_pressure"
+  ]
+}

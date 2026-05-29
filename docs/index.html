@@ -1,0 +1,1851 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>Elastic Cluster Triage — Day 2 Workflow</title>
+<style>
+/* ── Elastic brand palette ──────────────────────────────────────────────── */
+:root{
+  --el-teal:    #00BFB3;
+  --el-blue:    #0077CC;
+  --el-yellow:  #FEC514;
+  --el-pink:    #F04E98;
+  --el-red:     #E7664C;
+  --el-green:   #54B399;
+  --el-purple:  #A78BFA;
+  --el-bg:      #07080F;
+  --el-bg2:     #0D1117;
+  --el-surface: #111827;
+  --el-border:  #1C2535;
+  --el-text:    #D3DAE6;
+  --el-muted:   #69707D;
+  --el-accent:  #00BFB3;
+}
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+html,body{height:100%;font-family:"Segoe UI","Inter","Helvetica Neue",sans-serif;
+  background:var(--el-bg);color:var(--el-text);overflow:hidden}
+.deck{width:100vw;height:100vh;position:relative;overflow:hidden}
+@keyframes fadeUpIn{from{opacity:0;transform:translateY(18px)}to{opacity:1;transform:translateY(0)}}
+.slide{position:absolute;inset:0;display:flex;flex-direction:column;
+  justify-content:flex-start;padding:60px 58px 90px;
+  opacity:0;pointer-events:none;transform:translateX(70px);
+  transition:opacity .42s cubic-bezier(0.25,0.1,0.1,1),
+             transform .42s cubic-bezier(0.25,0.1,0.1,1);overflow-y:auto}
+.slide.active{opacity:1;pointer-events:all;transform:translateX(0)}
+.slide.active > *{animation:fadeUpIn .52s cubic-bezier(0.2,0,0,1) both}
+.slide.active > *:nth-child(1){animation-delay:.05s}
+.slide.active > *:nth-child(2){animation-delay:.12s}
+.slide.active > *:nth-child(3){animation-delay:.19s}
+.slide.active > *:nth-child(4){animation-delay:.26s}
+.slide.active > *:nth-child(5){animation-delay:.33s}
+.slide.active > *:nth-child(6){animation-delay:.40s}
+.slide.active > *:nth-child(7){animation-delay:.47s}
+/* Timeline steps stagger independently for a crisp sequential reveal */
+.slide.active .timeline .timeline-step{animation:fadeUpIn .45s cubic-bezier(0.2,0,0,1) both}
+.slide.active .timeline .timeline-step:nth-child(1){animation-delay:.28s}
+.slide.active .timeline .timeline-step:nth-child(2){animation-delay:.38s}
+.slide.active .timeline .timeline-step:nth-child(3){animation-delay:.48s}
+.slide.active .timeline .timeline-step:nth-child(4){animation-delay:.58s}
+.slide.active .timeline .timeline-step:nth-child(5){animation-delay:.68s}
+/* Finding tiles stagger */
+.slide.active .findings .finding{animation:fadeUpIn .42s cubic-bezier(0.2,0,0,1) both}
+.slide.active .findings .finding:nth-child(1){animation-delay:.20s}
+.slide.active .findings .finding:nth-child(2){animation-delay:.28s}
+.slide.active .findings .finding:nth-child(3){animation-delay:.36s}
+.slide.active .findings .finding:nth-child(4){animation-delay:.44s}
+.slide.active .findings .finding:nth-child(5){animation-delay:.52s}
+/* Flow steps stagger */
+.slide.active .flow-step{animation:fadeUpIn .42s cubic-bezier(0.2,0,0,1) both}
+.slide.active .flow-step:nth-child(1){animation-delay:.22s}
+.slide.active .flow-step:nth-child(2){animation-delay:.30s}
+.slide.active .flow-step:nth-child(3){animation-delay:.38s}
+.slide.active .flow-step:nth-child(4){animation-delay:.46s}
+.slide.exit-left{opacity:0;transform:translateX(-70px)}
+.slide.exit-right{opacity:0;transform:translateX(70px)}
+.slide.from-right{transform:translateX(70px);transition:none!important}
+.slide.from-left{transform:translateX(-70px);transition:none!important}
+
+/* ── Slide backgrounds ── */
+.s-cover     {background:radial-gradient(ellipse at 18% 50%,#0D1B2B 0%,var(--el-bg) 70%)}
+.s-monitor   {background:#080C18}
+.s-skills    {background:#070E18}
+.s-queries   {background:#07090F}
+.s-agent     {background:#080C14}
+.s-mcp       {background:#08100F}
+.s-workflows {background:#0A0C10}
+.s-mcpapp    {background:#080F16}
+.s-takeaways {background:radial-gradient(ellipse at 80% 80%,#071626 0%,var(--el-bg) 70%)}
+
+/* ── Typography ── */
+h1{font-size:2.55rem;font-weight:700;color:#fff;line-height:1.12;letter-spacing:-.02em}
+h2{font-size:1.55rem;font-weight:600;color:var(--el-teal);margin-bottom:14px;letter-spacing:-.01em}
+h3{font-size:1.02rem;font-weight:600;color:#54B399;margin-bottom:6px}
+p {font-size:.92rem;line-height:1.65;color:#8B96A7}
+code{font-family:"Fira Code","Consolas",monospace;background:#111827;
+     padding:2px 6px;border-radius:4px;font-size:.85em;color:var(--el-teal)}
+ul,ol{padding-left:1.3em}
+li{margin-bottom:6px;line-height:1.55;font-size:.92rem}
+strong{color:#D3DAE6}
+a{color:var(--el-teal);text-decoration:none;transition:opacity .2s}
+a:hover{opacity:.78;text-decoration:underline}
+
+/* ── Tables ── */
+table{border-collapse:collapse;width:100%;font-size:.84rem}
+thead tr{background:#0D1525}
+th{padding:8px 12px;text-align:left;color:var(--el-teal);font-weight:600;
+   border-bottom:2px solid #1C2535;white-space:nowrap}
+td{padding:7px 12px;border-bottom:1px solid #131C2A;vertical-align:top;color:var(--el-text)}
+tr:last-child td{border-bottom:none}
+tbody tr:hover{background:#0D1525}
+
+/* ── Layout helpers ── */
+.two-col{display:grid;grid-template-columns:1fr 1fr;gap:18px}
+.three-col{display:grid;grid-template-columns:1fr 1fr 1fr;gap:14px}
+.four-col{display:grid;grid-template-columns:repeat(4,1fr);gap:12px}
+.hero-grid{display:grid;grid-template-columns:1.2fr .8fr;gap:22px;align-items:start}
+
+/* ── Components ── */
+.badge-pill{display:inline-block;background:var(--el-yellow);color:#07080F;font-size:.76rem;
+  font-weight:700;padding:3px 12px;border-radius:20px;margin-bottom:14px;
+  letter-spacing:.08em;text-transform:uppercase}
+
+.section-kicker{font-size:.72rem;font-weight:700;text-transform:uppercase;letter-spacing:.1em;
+  color:var(--el-muted);margin-bottom:6px}
+
+.stat-grid{display:flex;gap:12px;flex-wrap:wrap;margin-top:22px}
+.stat-pill{background:#0D1525;border:1px solid var(--el-border);border-radius:10px;padding:13px 18px;min-width:130px}
+.stat-pill .val{font-size:1.5rem;font-weight:700;color:var(--el-teal)}
+.stat-pill .lbl{font-size:.71rem;color:var(--el-muted);margin-top:2px;text-transform:uppercase;letter-spacing:.06em}
+
+.hbox{background:#0C1525;border-left:4px solid var(--el-teal);border-radius:0 8px 8px 0;
+  padding:10px 15px;margin:10px 0;font-size:.88rem;color:#8B96A7}
+.hbox.green{border-left-color:var(--el-green);background:#071420}
+.hbox.yellow{border-left-color:var(--el-yellow);background:#14120A}
+.hbox strong{color:var(--el-text)}
+
+.card{background:#0C1220;border:1px solid var(--el-border);border-radius:12px;padding:16px}
+.card h3{color:var(--el-teal);margin-bottom:10px}
+
+.skill-card{background:#0C1220;border:1px solid var(--el-border);border-radius:12px;padding:16px;
+  position:relative;overflow:hidden}
+.skill-card::before{content:'';position:absolute;top:0;left:0;right:0;height:2px;
+  background:linear-gradient(90deg,var(--el-teal),var(--el-blue))}
+.skill-card.green::before{background:linear-gradient(90deg,var(--el-green),var(--el-teal))}
+.skill-card.yellow::before{background:linear-gradient(90deg,var(--el-yellow),#E7664C)}
+.skill-card.pink::before{background:linear-gradient(90deg,var(--el-pink),var(--el-purple))}
+.skill-card.blue::before{background:linear-gradient(90deg,var(--el-blue),var(--el-teal))}
+.skill-card h3{font-size:.96rem;color:#D3DAE6;margin-bottom:4px}
+.skill-card p{font-size:.83rem;margin-bottom:10px}
+
+.skill-badge{display:inline-block;font-size:.7rem;font-weight:700;padding:2px 9px;
+  border-radius:12px;letter-spacing:.04em;text-transform:uppercase;margin-bottom:8px}
+.badge-cluster{background:rgba(0,191,179,.14);color:var(--el-teal);border:1px solid rgba(0,191,179,.25)}
+.badge-resource{background:rgba(0,119,204,.14);color:#5BADDE;border:1px solid rgba(0,119,204,.25)}
+.badge-index{background:rgba(84,179,153,.14);color:var(--el-green);border:1px solid rgba(84,179,153,.25)}
+.badge-lifecycle{background:rgba(254,197,20,.14);color:#FEC514;border:1px solid rgba(254,197,20,.25)}
+.badge-logs{background:rgba(240,78,152,.14);color:#F04E98;border:1px solid rgba(240,78,152,.25)}
+
+.chip-row{display:flex;flex-wrap:wrap;gap:6px;margin-top:6px}
+.chip{padding:3px 8px;border-radius:6px;background:#111827;border:1px solid #1C2535;
+  color:var(--el-teal);font-size:.73rem;font-family:"Fira Code","Consolas",monospace}
+
+.query-card{background:#080E1A;border:1px solid #131E2E;border-radius:12px;padding:16px}
+.query-card h3{font-size:.94rem;color:#D3DAE6;margin-bottom:4px}
+.query-card p{font-size:.83rem;margin-bottom:10px}
+.query-tag{display:inline-block;font-size:.7rem;font-weight:700;padding:2px 8px;
+  border-radius:12px;background:rgba(0,191,179,.12);color:var(--el-teal);
+  border:1px solid rgba(0,191,179,.2);margin-bottom:8px}
+.code-block{background:#040912;border:1px solid #131E2E;border-radius:8px;padding:14px;
+  font-family:"Fira Code","Consolas",monospace;font-size:.79rem;line-height:1.6;
+  color:#93E7FF;overflow-x:auto;white-space:pre;margin:8px 0}
+
+.ref-block{background:#070E18;border:1px solid var(--el-border);border-radius:10px;padding:14px}
+.ref-block h3{font-size:.9rem;color:var(--el-green);margin-bottom:10px}
+.ref-link{display:flex;align-items:center;gap:7px;color:#7BC8FF;font-size:.83rem;
+  margin-bottom:7px;text-decoration:none}
+.ref-link::before{content:'↗';color:var(--el-teal);font-size:.8rem;flex-shrink:0}
+.ref-link:hover{color:var(--el-teal)}
+
+.timeline{display:grid;gap:10px}
+.timeline-step{display:grid;grid-template-columns:44px 1fr;gap:12px;align-items:start;
+  background:#08101C;border:1px solid #131E2E;border-radius:10px;padding:12px}
+.timeline-num{width:32px;height:32px;border-radius:50%;display:grid;place-items:center;
+  font-weight:800;font-size:.88rem;background:linear-gradient(135deg,var(--el-teal),var(--el-blue));
+  color:#fff;flex-shrink:0}
+.timeline-step strong{display:block;font-size:.92rem;color:var(--el-text);margin-bottom:3px}
+.timeline-step p{margin:0;font-size:.83rem}
+
+.findings{display:grid;grid-template-columns:repeat(5,1fr);gap:12px;margin-top:16px}
+.finding{background:#0C1220;border-radius:10px;padding:14px 12px;border:1px solid var(--el-border)}
+.finding .num{font-size:1.9rem;font-weight:700;margin-bottom:3px}
+.finding .desc{font-size:.76rem;color:var(--el-muted);line-height:1.45}
+
+.flow-step{display:grid;grid-template-columns:52px 1fr;gap:12px;align-items:center;
+  background:#08101C;border:1px solid #131E2E;border-radius:10px;padding:12px;margin-bottom:8px}
+.flow-badge{width:40px;height:40px;border-radius:10px;display:grid;place-items:center;
+  font-weight:800;font-size:.9rem;color:#fff;flex-shrink:0;
+  background:linear-gradient(135deg,rgba(0,191,179,.9),rgba(0,119,204,.9))}
+.flow-step h3{font-size:.94rem;color:var(--el-text);margin:0 0 2px}
+.flow-step p{margin:0;font-size:.83rem}
+
+.metric-row{display:flex;justify-content:space-between;font-size:.82rem;
+  padding:5px 0;border-bottom:1px solid #131C2A}
+.metric-row:last-child{border-bottom:none}
+.metric-val{font-weight:600;color:var(--el-teal)}
+
+/* ── Bottom navigation ── */
+.slide-nav{position:fixed;bottom:18px;left:50%;transform:translateX(-50%);
+  display:flex;gap:2px;z-index:100;
+  background:rgba(7,8,15,0.9);padding:5px 6px;border-radius:14px;
+  border:1px solid #1C2535;backdrop-filter:blur(10px)}
+.snav-btn{background:transparent;border:none;color:#4A5568;
+  font-size:.67rem;padding:5px 9px;border-radius:9px;cursor:pointer;
+  transition:background .2s,color .2s;white-space:nowrap;font-family:inherit;
+  display:flex;align-items:center;gap:4px}
+.snav-btn:hover{background:#0D1525;color:#8B96A7}
+.snav-btn.active{background:#0D1525;color:var(--el-teal);font-weight:700}
+.snav-num{font-size:.56rem;opacity:.5;font-variant-numeric:tabular-nums}
+
+.nav{position:fixed;top:14px;right:20px;display:flex;align-items:center;gap:8px;z-index:200}
+.nav button{background:#0D1525;border:1px solid #1C2535;color:#8B96A7;
+  padding:6px 14px;border-radius:7px;cursor:pointer;font-size:.83rem;
+  transition:background .2s,color .2s;font-family:inherit}
+.nav button:hover{background:#142030;color:var(--el-text)}
+.nav button:disabled{opacity:.25;cursor:default}
+.nav button.pdf-btn{color:var(--el-teal);padding:6px 11px;font-size:.77rem}
+.nav button.pptx-btn{color:#7BC8FF;padding:6px 11px;font-size:.77rem}
+.nav button.theme-btn{padding:5px 10px;font-size:.95rem;min-width:32px}
+.theme-btn::before{content:'🌙'}
+.slide-counter{font-size:.76rem;color:var(--el-muted);background:#0D1525;
+  padding:5px 10px;border-radius:7px;border:1px solid var(--el-border)}
+
+.elastic-logo{position:fixed;bottom:16px;left:20px;z-index:200;
+  display:flex;align-items:center;gap:8px;opacity:.65;transition:opacity .2s;
+  padding:4px 10px;border-radius:8px}
+.elastic-logo:hover{opacity:1}
+.elastic-logo img{height:22px;width:auto}
+/* Give the white SVG wordmark a legible backdrop in light mode */
+body.light .elastic-logo{background:rgba(7,8,15,.72);opacity:.8}
+
+/* ══════════════════════════════════════════════════════════════════════
+   LIGHT THEME
+   Applied when <body> carries the .light class
+   ══════════════════════════════════════════════════════════════════════ */
+body.light{
+  --el-teal:   #006B66;
+  --el-blue:   #005FAD;
+  --el-yellow: #9A7200;
+  --el-green:  #1A6B57;
+  --el-red:    #B83928;
+  --el-pink:   #A0306A;
+  --el-purple: #5C3DB0;
+  --el-bg:     #F0F4FA;
+  --el-bg2:    #E4EAF5;
+  --el-surface:#FFFFFF;
+  --el-border: #C0CCDC;
+  --el-text:   #18243A;
+  --el-muted:  #556070;
+  --el-accent: #006B66;
+}
+
+/* Slide backgrounds */
+body.light .s-cover    {background:radial-gradient(ellipse at 18% 50%,#C8DDEF 0%,#F0F4FA 70%)}
+body.light .s-monitor  {background:#EDF2FA}
+body.light .s-skills   {background:#EEF3F8}
+body.light .s-queries  {background:#F0F4FA}
+body.light .s-agent    {background:#EEF2F8}
+body.light .s-mcp      {background:#EDF4F0}
+body.light .s-workflows{background:#F0F2F8}
+body.light .s-mcpapp    {background:#EBF4F0}
+body.light .s-takeaways{background:radial-gradient(ellipse at 80% 80%,#C4DFF0 0%,#F0F4FA 70%)}
+
+/* Typography */
+body.light h1{color:#111B2E}
+body.light h2{color:var(--el-teal)}
+body.light h3{color:var(--el-green)}
+body.light p {color:#4A5A70}
+body.light li{color:#4A5A70}
+body.light strong{color:#18243A}
+body.light a{color:var(--el-blue)}
+body.light a:hover{color:var(--el-teal)}
+body.light code{background:#DCE8F5;color:var(--el-teal)}
+
+/* Cards & panels */
+body.light .card,
+body.light .skill-card,
+body.light .query-card,
+body.light .ref-block{background:#FFFFFF;border-color:#C0CCDC}
+
+/* HBoxes */
+body.light .hbox       {background:#DFF0FA;border-left-color:var(--el-teal);color:#2A3A52}
+body.light .hbox.green {background:#D8F0E8;border-left-color:var(--el-green)}
+body.light .hbox.yellow{background:#FDF4D0;border-left-color:var(--el-yellow)}
+body.light .hbox strong{color:#18243A}
+
+/* Stat pills */
+body.light .stat-pill{background:#FFFFFF;border-color:#C0CCDC}
+body.light .stat-pill .val{color:var(--el-teal)}
+body.light .stat-pill .lbl{color:var(--el-muted)}
+
+/* Code block */
+body.light .code-block{background:#F0F4FC;border-color:#C8D4E8;color:#1A3A5C}
+
+/* Chips */
+body.light .chip{background:#E4EEF8;border-color:#C0CCDC;color:var(--el-teal)}
+
+/* Skill badges */
+body.light .badge-cluster  {background:rgba(0,107,102,.12);color:var(--el-teal);border-color:rgba(0,107,102,.25)}
+body.light .badge-resource {background:rgba(0,95,173,.12);color:var(--el-blue);border-color:rgba(0,95,173,.25)}
+body.light .badge-index    {background:rgba(26,107,87,.12);color:var(--el-green);border-color:rgba(26,107,87,.25)}
+body.light .badge-lifecycle{background:rgba(154,114,0,.12);color:var(--el-yellow);border-color:rgba(154,114,0,.25)}
+body.light .badge-logs     {background:rgba(160,48,106,.12);color:var(--el-pink);border-color:rgba(160,48,106,.25)}
+
+/* Query tag */
+body.light .query-tag{background:rgba(0,107,102,.1);border-color:rgba(0,107,102,.22);color:var(--el-teal)}
+
+/* Metric rows */
+body.light .metric-row{border-bottom-color:#D4DCE8;color:#4A5A70}
+body.light .metric-val{color:var(--el-teal)}
+
+/* Timeline & flow */
+body.light .timeline-step,
+body.light .flow-step{background:#F0F4FA;border-color:#C0CCDC}
+body.light .timeline-step strong,
+body.light .flow-step h3{color:#18243A}
+body.light .timeline-step p,
+body.light .flow-step p{color:#4A5A70}
+
+/* Ref links */
+body.light .ref-link{color:var(--el-blue)}
+body.light .ref-link::before{color:var(--el-teal)}
+body.light .ref-link:hover{color:var(--el-teal)}
+
+/* Badge pill */
+body.light .badge-pill{background:var(--el-yellow);color:#1A0E00}
+body.light .section-kicker{color:var(--el-muted)}
+
+/* Flow chain pills */
+.flow-pill{
+  font-size:.8rem;background:#0D1525;border:1px solid var(--el-border);
+  border-radius:8px;padding:6px 12px;font-weight:600;display:inline-block
+}
+.flow-pill.sm{padding:5px 10px}
+body.light .flow-pill{background:#FFFFFF;border-color:#C0CCDC}
+
+/* Any remaining inline dark backgrounds */
+body.light [style*="background:#0D1525"]{background:#FFFFFF !important;border-color:#C0CCDC !important}
+body.light [style*="background:#080E1A"]{background:#F0F4FC !important;border-color:#C8D4E8 !important}
+body.light [style*="background:#070E18"]{background:#FFFFFF !important;border-color:#C0CCDC !important}
+/* Tools hbox uses a blue border-left but inherits hbox bg — ensure it's light */
+body.light .hbox[style*="border-left-color:#7BC8FF"]{background:#E4EFFC !important}
+body.light .hbox[style*="border-left-color:var(--el-purple)"]{background:#EDE8FA !important}
+body.light .hbox[style*="border-left-color:var(--el-muted)"]{background:#EEF1F6 !important}
+
+/* Bottom nav */
+body.light .slide-nav{background:rgba(240,244,250,.94);border-color:#C0CCDC;backdrop-filter:blur(10px)}
+body.light .snav-btn{color:#8090A8}
+body.light .snav-btn:hover{background:#E4EAF5;color:#4A5A70}
+body.light .snav-btn.active{background:#E4EAF5;color:var(--el-teal)}
+
+/* Top-right nav buttons */
+body.light .nav button{background:#FFFFFF;border-color:#C0CCDC;color:#556070}
+body.light .nav button:hover{background:#E8EEF8;color:#18243A}
+body.light .nav button:disabled{opacity:.3}
+body.light .nav button.pdf-btn{color:var(--el-teal)}
+body.light .nav button.pptx-btn{color:var(--el-blue)}
+body.light .slide-counter{background:#FFFFFF;border-color:#C0CCDC;color:var(--el-muted)}
+
+/* Theme toggle icon */
+body.light .theme-btn::before{content:'☀'}
+body.dark  .theme-btn::before{content:'🌙'}
+
+/* Findings */
+body.light .finding{background:#FFFFFF;border-color:#C0CCDC}
+
+/* ── Trigger pills (Workflows slide Step A) ──────────────────────────────── */
+.trigger-pill{background:#13181F;border-radius:8px;padding:8px 10px;border:1px solid transparent}
+.trigger-pill.t-yellow{border-color:rgba(254,197,20,.30)}
+.trigger-pill.t-blue  {border-color:rgba(29,155,240,.30)}
+.trigger-pill.t-red   {border-color:rgba(248,81,73,.30)}
+.trigger-pill .tp-label{font-size:.72rem;font-weight:700;text-transform:uppercase;letter-spacing:.07em;margin-bottom:3px}
+.trigger-pill .tp-desc {font-size:.77rem;color:var(--el-muted);line-height:1.4}
+.trigger-pill .tp-code {font-family:'Fira Code',monospace;font-size:.71rem;margin-top:5px;word-break:break-all}
+.trigger-pill .tp-sub  {font-size:.70rem;color:var(--el-muted);margin-top:2px;opacity:.8}
+body.light .trigger-pill          {background:#F0F4FA;border-color:transparent}
+body.light .trigger-pill.t-yellow {border-color:rgba(180,130,0,.40)}
+body.light .trigger-pill.t-blue   {border-color:rgba(0,100,190,.35)}
+body.light .trigger-pill.t-red    {border-color:rgba(180,40,40,.35)}
+body.light .trigger-pill .tp-desc {color:var(--el-muted)}
+body.light .trigger-pill .tp-sub  {color:var(--el-muted)}
+
+/* Severity chips */
+.sev-chip{font-size:.69rem;border-radius:4px;padding:2px 6px;border:1px solid}
+.sev-chip.sev-n{background:#1A1F28;border-color:#444;color:#7D8590}
+.sev-chip.sev-g{background:#1A1F28;border-color:rgba(84,179,153,.40);color:#54B399}
+.sev-chip.sev-o{background:#1A1F28;border-color:rgba(240,136,62,.40);color:#F0883E}
+.sev-chip.sev-r{background:#1A1F28;border-color:rgba(248,81,73,.40);color:#F85149}
+body.light .sev-chip.sev-n{background:#F0F4FA;border-color:#A0ACBC;color:#556070}
+body.light .sev-chip.sev-g{background:#E8F5F0;border-color:#54B399;color:#1A7A60}
+body.light .sev-chip.sev-o{background:#FDF3E8;border-color:#D07020;color:#8C4A00}
+body.light .sev-chip.sev-r{background:#FEF0F0;border-color:#C04040;color:#8C0000}
+
+@media print{
+  /* ── Page setup ─────────────────────────────────────────────────────── */
+  @page{
+    margin:0;
+    size:A4 landscape;   /* 297mm × 210mm — one slide per page */
+  }
+
+  /* ── Force backgrounds and colours to print ─────────────────────────── */
+  *{
+    -webkit-print-color-adjust:exact !important;
+    print-color-adjust:exact !important;
+  }
+
+  html,body{
+    overflow:visible !important;
+    height:auto !important;
+    background:var(--el-bg) !important;
+    color:var(--el-text) !important;
+  }
+
+  .deck{height:auto;overflow:visible}
+
+  /* ── Each slide = one landscape page ────────────────────────────────── */
+  .slide{
+    position:relative !important;
+    opacity:1 !important;
+    pointer-events:all;
+    transform:none !important;
+    page-break-after:always;
+    break-after:page;
+    /* Fixed to A4 landscape — browser maps 1px ≈ 0.2646mm at 96 dpi */
+    width:297mm;
+    height:210mm;
+    max-height:210mm;
+    overflow:hidden;
+    display:flex !important;
+    flex-direction:column;
+    /* Tighter padding so content breathes but doesn't overflow */
+    padding:18px 36px 18px !important;
+    box-sizing:border-box;
+  }
+
+  .slide.exit-left,.slide.exit-right,.slide.from-right,.slide.from-left{opacity:1 !important;transform:none !important;transition:none !important}
+  .slide.active > *,
+  .slide.active .timeline .timeline-step,
+  .slide.active .findings .finding,
+  .slide.active .flow-step{animation:none !important}
+
+  /* ── Hide interactive chrome ─────────────────────────────────────────── */
+  .nav,.slide-nav,.elastic-logo{display:none !important}
+
+  /* ── Typography scale-down for print ────────────────────────────────── */
+  h1{font-size:1.9rem !important;margin-bottom:8px}
+  h2{font-size:1.2rem !important;margin-bottom:8px !important}
+  h3{font-size:.84rem !important;margin-bottom:4px !important}
+  p{font-size:.78rem !important;line-height:1.5 !important}
+  li{font-size:.78rem !important;margin-bottom:4px !important}
+
+  /* ── Reduce component spacing ────────────────────────────────────────── */
+  .two-col,.three-col,.four-col{gap:10px !important}
+  .stat-grid{gap:8px !important;margin-top:12px !important}
+  .stat-pill{padding:8px 12px !important}
+  .stat-pill .val{font-size:1.1rem !important}
+  .stat-pill .lbl{font-size:.62rem !important}
+  .hbox{padding:7px 11px !important;margin:6px 0 !important;font-size:.78rem !important}
+  .card,.skill-card,.query-card,.ref-block{padding:10px 12px !important}
+  .findings{gap:8px !important;margin-top:10px !important}
+  .finding .num{font-size:1.4rem !important}
+  .finding .desc{font-size:.68rem !important}
+  .timeline{gap:7px !important}
+  .timeline-step{padding:8px !important}
+  .timeline-num{width:26px;height:26px;font-size:.76rem}
+  .flow-step{padding:8px !important;margin-bottom:5px !important}
+  .flow-badge{width:32px;height:32px;font-size:.78rem}
+  .metric-row{padding:3px 0 !important;font-size:.76rem !important}
+  .ref-link{font-size:.76rem !important;margin-bottom:4px !important}
+  .chip{font-size:.66rem !important;padding:2px 6px !important}
+  .chip-row{gap:4px !important;margin-top:4px !important}
+  .skill-badge{font-size:.62rem !important;padding:1px 6px !important}
+  .section-kicker{font-size:.64rem !important;margin-bottom:3px !important}
+  .badge-pill{font-size:.66rem !important;padding:2px 8px !important;margin-bottom:8px !important}
+
+  /* ── Code blocks: smaller font so queries fit on one page ───────────── */
+  .code-block{
+    font-size:.68rem !important;
+    line-height:1.45 !important;
+    padding:9px 11px !important;
+    margin:5px 0 !important;
+    white-space:pre-wrap !important; /* wrap long lines rather than overflow */
+  }
+  code{font-size:.74rem !important}
+
+  /* ── Slide-specific tweaks ───────────────────────────────────────────── */
+
+  /* Overview: condense the tools-at-a-glance table */
+  .s-cover [style*="line-height:1.6"]{line-height:1.45 !important;font-size:.7rem !important}
+
+  /* Query slides: keep the 2-col grid but let it breathe less */
+  .s-queries .query-card{padding:8px 10px !important}
+  .s-queries h3{font-size:.8rem !important}
+  .s-queries p{font-size:.75rem !important}
+  .query-tag{font-size:.62rem !important;padding:1px 6px !important;margin-bottom:4px !important}
+
+  /* ── Light-theme print overrides ─────────────────────────────────────── */
+  /* body.light CSS variables are already active during print, so colours
+     inherit automatically. These rules lock down the few components that
+     still carry hardcoded dark hex values in the base stylesheet. */
+  body.light html,
+  body.light body{background:#F0F4FA !important;color:#18243A !important}
+
+  body.light .s-cover    {background:#E8F0FA !important}
+  body.light .s-monitor,
+  body.light .s-skills,
+  body.light .s-queries,
+  body.light .s-agent,
+  body.light .s-mcp,
+  body.light .s-workflows,
+  body.light .s-takeaways{background:#EEF3FA !important}
+
+  body.light .card,
+  body.light .skill-card,
+  body.light .query-card,
+  body.light .ref-block{background:#FFFFFF !important;border-color:#C0CCDC !important}
+
+  body.light .code-block{background:#F0F4FC !important;color:#1A3A5C !important;border-color:#C8D4E8 !important}
+  body.light code       {background:#DCE8F5 !important;color:#006B66 !important}
+
+  body.light .hbox      {background:#DFF0FA !important;color:#2A3A52 !important}
+  body.light .hbox.green{background:#D8F0E8 !important}
+  body.light .hbox.yellow{background:#FDF4D0 !important}
+
+  body.light .stat-pill  {background:#FFFFFF !important;border-color:#C0CCDC !important}
+  body.light .flow-pill  {background:#FFFFFF !important;border-color:#C0CCDC !important}
+  body.light .timeline-step,
+  body.light .flow-step {background:#F0F4FA !important;border-color:#C0CCDC !important}
+  body.light .finding   {background:#FFFFFF !important;border-color:#C0CCDC !important}
+  body.light .trigger-pill          {background:#F0F4FA !important;border-color:transparent !important}
+  body.light .trigger-pill.t-yellow {border-color:rgba(180,130,0,.40) !important}
+  body.light .trigger-pill.t-blue   {border-color:rgba(0,100,190,.35) !important}
+  body.light .trigger-pill.t-red    {border-color:rgba(180,40,40,.35) !important}
+  body.light .sev-chip.sev-n {background:#F0F4FA !important;border-color:#A0ACBC !important;color:#556070 !important}
+  body.light .sev-chip.sev-g {background:#E8F5F0 !important;border-color:#54B399 !important;color:#1A7A60 !important}
+  body.light .sev-chip.sev-o {background:#FDF3E8 !important;border-color:#D07020 !important;color:#8C4A00 !important}
+  body.light .sev-chip.sev-r {background:#FEF0F0 !important;border-color:#C04040 !important;color:#8C0000 !important}
+  body.light h2{color:#006B66 !important}
+  body.light h3{color:#1A6B57 !important}
+  body.light p,body.light li{color:#4A5A70 !important}
+  body.light strong{color:#18243A !important}
+}
+</style>
+</head>
+<body>
+<div class="deck" id="deck">
+
+<!-- ═══════════════════════════════════════════════════════════════════════
+     SLIDE 1 — COVER
+     ══════════════════════════════════════════════════════════════════════ -->
+<div class="slide s-cover" data-slide="1">
+  <div style="margin-bottom:16px">
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 500 171.72" style="height:34px;width:auto;opacity:.88" aria-label="Elastic">
+      <defs><style>.el-w{fill:#fff}.el-y{fill:#fec514}.el-t{fill:#00bfb3}.el-p{fill:#f04e98}.el-b{fill:#1ba9f5}.el-g{fill:#93c90e}.el-db{fill:#07c}</style></defs>
+      <path class="el-w" d="M240.06,116.77l3.45-.35.23,7a171.44,171.44,0,0,1-23.16,1.9q-12.83,0-18.17-7.43t-5.35-23.1q0-31.23,24.83-31.24,12,0,17.93,6.71t5.94,21.09l-.47,6.77h-39.2q0,9.86,3.56,14.61t12.42,4.75Q230.91,117.49,240.06,116.77ZM236.85,91q0-10.92-3.5-15.44T222,71.05q-7.9,0-11.88,4.75T206,91Z"/>
+      <path class="el-w" d="M258.18,125.24V46.41h8.91v78.83Z"/>
+      <path class="el-w" d="M323.19,82.69v30c0,3,7.4,2.85,7.4,2.85l-.46,7.87c-6.26,0-11.44.52-14.55-2.49a51.72,51.72,0,0,1-21.37,4.46q-8.19,0-12.47-4.64t-4.28-13.3q0-8.67,4.4-12.77t13.78-5l18.64-1.79v-5.1q0-6.06-2.61-8.67a9.61,9.61,0,0,0-7.13-2.62l-23.4,0V63.56H304q10.1,0,14.67,4.63T323.19,82.69Zm-36.58,24.23q0,10.92,9,10.92a48,48,0,0,0,15.91-2.73l2.73-1V94.56L296.7,96.23q-5.34.47-7.72,3.08C287.4,101.06,286.61,103.59,286.61,106.92Z"/>
+      <path class="el-w" d="M358,71.52q-12.94,0-12.95,9,0,4.15,3,5.88T361.52,90q10.58,1.85,15,5.17t4.39,12.47q0,9.15-5.87,13.42t-17.17,4.28c-4.91,0-21.29-1.82-21.29-1.82l.47-7.72c9.42.91,16.23,1.58,20.82,1.58s8.1-.73,10.51-2.2,3.63-3.92,3.63-7.36-1-5.78-3.09-7-6.58-2.4-13.54-3.5-11.92-2.74-14.85-4.87-4.39-6.1-4.39-11.88,2-10.06,6.11-12.83,9.17-4.16,15.27-4.16c4.82,0,21.58,1.23,21.58,1.23v7.77C370.26,72.16,363,71.52,358,71.52Z"/>
+      <path class="el-w" d="M423.85,72.47H405v28.39q0,10.22,1.49,13.42c1,2.14,3.34,3.21,7.07,3.21l10.57-.72.59,7.37a81.52,81.52,0,0,1-12.11,1.31q-9.27,0-12.83-4.52t-3.57-17.22V72.47h-8.43V64.75h8.43V46.58H405V64.75h18.89Z"/>
+      <path class="el-w" d="M436.23,56.81V46.47h8.91V56.81Zm0,68.43V65.12h8.91v60.12Z"/>
+      <path class="el-w" d="M483.73,63.56A103,103,0,0,1,497,65l2.85.35-.36,7.25a140,140,0,0,0-14-1.07q-10.1,0-13.72,4.81t-3.62,17.82q0,13,3.38,18.11t14.08,5.11l14-1.07.36,7.36a122.15,122.15,0,0,1-16.51,1.67q-13.89,0-19.18-7.13t-5.29-24q0-16.94,5.7-23.76T483.73,63.56Z"/>
+      <path class="el-w" d="M172.39,90A33.94,33.94,0,0,0,150,58a48.21,48.21,0,0,0,.9-9.26A48.69,48.69,0,0,0,62.68,20.2,25.85,25.85,0,0,0,22.62,49.65,34.39,34.39,0,0,0,0,81.77a34,34,0,0,0,22.54,32.09,49.86,49.86,0,0,0-.89,9.26,48.56,48.56,0,0,0,88,28.31,25.81,25.81,0,0,0,40.08-29.34A34.39,34.39,0,0,0,172.39,90"/>
+      <path class="el-y" d="M67.77,74l37.73,17.2L143.55,57.8A42.54,42.54,0,0,0,66.74,25.39L60.41,58.23Z"/>
+      <path class="el-t" d="M28.73,113.9a43.34,43.34,0,0,0-.83,8.49,42.65,42.65,0,0,0,77.92,24l6.28-32.73-8.39-16L65.84,80.36Z"/>
+      <path class="el-p" d="M28.49,48.62l25.85,6.1L60,25.33A20.43,20.43,0,0,0,28.49,48.62"/>
+      <path class="el-b" d="M26.25,54.78A28.51,28.51,0,0,0,25,108.49L61.28,75.71,54.62,61.48Z"/>
+      <path class="el-g" d="M112.45,146.37a20.39,20.39,0,0,0,31.45-23.25l-25.83-6Z"/>
+      <path class="el-db" d="M117.7,110.31,146.14,117a28.77,28.77,0,0,0,19.58-27.08,28.46,28.46,0,0,0-18.38-26.59L110.15,95.88Z"/>
+    </svg>
+  </div>
+  <div class="badge-pill">Day 2 Operations Workflow</div>
+  <h1>Elastic Cluster Triage<br/>with AI Agents</h1>
+  <p style="margin-top:12px;max-width:580px;font-size:.98rem">
+    A structured workflow that starts with <strong>Stack Monitoring</strong> evidence,
+    routes through <strong>tools and skills</strong>, packages into an <strong>Agent</strong>,
+    and scales into <strong>autonomous workflows</strong>.
+  </p>
+  <div class="stat-grid">
+    <div class="stat-pill"><div class="val">5</div><div class="lbl">Skills</div></div>
+    <div class="stat-pill"><div class="val">19</div><div class="lbl">Tools / Queries</div></div>
+    <div class="stat-pill"><div class="val">1</div><div class="lbl">Agent</div></div>
+    <div class="stat-pill"><div class="val">MCP</div><div class="lbl">External Access</div></div>
+    <div class="stat-pill"><div class="val">∞</div><div class="lbl">Workflows</div></div>
+  </div>
+
+  <div style="margin-top:28px;display:flex;align-items:center;gap:0;flex-wrap:wrap">
+    <span class="flow-pill" style="color:var(--el-teal)">Stack Monitoring</span>
+    <span style="color:var(--el-muted);padding:0 6px;font-size:1rem">→</span>
+    <span class="flow-pill" style="color:#7BC8FF">Tools</span>
+    <span style="color:var(--el-muted);padding:0 6px;font-size:1rem">→</span>
+    <span class="flow-pill" style="color:var(--el-green)">Skills</span>
+    <span style="color:var(--el-muted);padding:0 6px;font-size:1rem">→</span>
+    <span class="flow-pill" style="color:var(--el-purple)">Agent</span>
+    <span style="color:var(--el-muted);padding:0 6px;font-size:1rem">→</span>
+    <span class="flow-pill" style="color:var(--el-yellow)">Workflows</span>
+  </div>
+
+  <div style="margin-top:28px;max-width:900px">
+    <h3 style="color:var(--el-muted);font-size:.78rem;text-transform:uppercase;letter-spacing:.08em;margin-bottom:10px">What this deck covers</h3>
+    <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;margin-bottom:18px">
+      <div class="hbox" style="margin:0"><strong>Stack Monitoring</strong> — evidence layer before the agent reasons</div>
+      <div class="hbox" style="margin:0;border-left-color:#7BC8FF"><strong>Tools (19 ES|QL queries)</strong> — atomic data-gathering units each skill invokes</div>
+      <div class="hbox green" style="margin:0"><strong>Skills (5)</strong> — focused troubleshooting paths built from tools</div>
+      <div class="hbox" style="margin:0;border-left-color:var(--el-purple)"><strong>Agent Builder</strong> — packages skills + tools into a reusable Kibana agent</div>
+      <div class="hbox yellow" style="margin:0"><strong>Workflows</strong> — moves repetitive questions from chat to autonomous execution</div>
+      <div class="hbox" style="margin:0;border-left-color:var(--el-muted)"><strong>MCP</strong> — exposes the agent to Claude Desktop, Cursor, and other clients</div>
+    </div>
+
+    <div class="query-card" style="border-radius:10px;padding:14px">
+      <h3 style="color:#7BC8FF;font-size:.84rem;margin-bottom:10px;text-transform:uppercase;letter-spacing:.06em">Tools at a glance — 19 ES|QL query tools across 5 skills</h3>
+      <div style="display:grid;grid-template-columns:repeat(5,1fr);gap:10px;font-size:.78rem">
+        <div>
+          <div style="color:var(--el-teal);font-weight:700;margin-bottom:5px">Cluster Health</div>
+          <div style="color:var(--el-muted);line-height:1.6">cluster_health_summary<br/>red_yellow_periods<br/>node_last_seen<br/>node_pressure_summary<br/>jvm_gc_pressure</div>
+        </div>
+        <div>
+          <div style="color:#5BADDE;font-weight:700;margin-bottom:5px">Resource Pressure</div>
+          <div style="color:var(--el-muted);line-height:1.6">disk_shard_pressure<br/>thread_pool_rejections<br/>node_pressure_summary</div>
+        </div>
+        <div>
+          <div style="color:var(--el-green);font-weight:700;margin-bottom:5px">Index Pressure</div>
+          <div style="color:var(--el-muted);line-height:1.6">index_pressure_analysis<br/>unassigned_shard_analysis<br/>hot_shards_analysis<br/>slow_index_queries</div>
+        </div>
+        <div>
+          <div style="color:var(--el-yellow);font-weight:700;margin-bottom:5px">Lifecycle</div>
+          <div style="color:var(--el-muted);line-height:1.6">index_growth_analysis<br/>mapping_explosion_detection<br/>ilm_stuck_indices<br/>indexing_hotspots</div>
+        </div>
+        <div>
+          <div style="color:var(--el-pink);font-weight:700;margin-bottom:5px">Logs &amp; Security</div>
+          <div style="color:var(--el-muted);line-height:1.6">error_log_summary<br/>audit_security_events</div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════════════════════════════════════
+     SLIDE 2 — STACK MONITORING
+     ══════════════════════════════════════════════════════════════════════ -->
+<div class="slide s-monitor" data-slide="2">
+  <div class="section-kicker">Stack Monitoring</div>
+  <h2>Start with the evidence layer Elastic already gives you</h2>
+  <p style="max-width:700px;margin-bottom:18px">
+    Stack Monitoring collects performance metrics and logs from Elasticsearch nodes, Kibana, Logstash, and Beats.
+    Data is stored in dedicated monitoring indices and visualized in the Kibana Stack Monitoring UI.
+    In Elastic Cloud Hosted, collection is automatic. For self-managed clusters, deploy <strong>Metricbeat</strong>
+    with the Elasticsearch module or use internal collection.
+  </p>
+
+  <div class="two-col" style="gap:18px">
+    <div>
+      <div class="card" style="margin-bottom:14px">
+        <h3>What Stack Monitoring collects per node</h3>
+        <div class="metric-row"><span>Cluster health</span><span class="metric-val">green / yellow / red + reason</span></div>
+        <div class="metric-row"><span>JVM heap &amp; GC</span><span class="metric-val">used %, old-gen GC count &amp; duration</span></div>
+        <div class="metric-row"><span>CPU &amp; system load</span><span class="metric-val">process.cpu.pct, OS load average</span></div>
+        <div class="metric-row"><span>Disk &amp; filesystem</span><span class="metric-val">free space, read/write stats per node</span></div>
+        <div class="metric-row"><span>Thread pool queues</span><span class="metric-val">write, search, bulk rejections per pool</span></div>
+        <div class="metric-row"><span>Shard allocation state</span><span class="metric-val">unassigned shards, recovery progress</span></div>
+        <div class="metric-row"><span>Indexing &amp; search rate</span><span class="metric-val">docs/s, query latency, shard segment counts</span></div>
+      </div>
+      <div class="hbox green">
+        <strong>Why start here:</strong> Stack Monitoring turns a vague "something feels slow" report
+        into a structured cluster view — before the agent adds any interpretation.
+        The evidence must come first.
+      </div>
+      <div class="hbox yellow" style="margin-top:8px;font-size:.83rem">
+        <strong>Best practice:</strong> ship monitoring data to a <em>separate</em> cluster so an outage
+        does not eliminate your visibility into what caused it.
+        See <a href="https://www.elastic.co/docs/deploy-manage/monitor/stack-monitoring/elasticsearch-monitoring-self-managed" target="_blank">self-managed setup guide</a>.
+      </div>
+    </div>
+
+    <div>
+      <div class="ref-block" style="margin-bottom:14px">
+        <h3>Elastic documentation</h3>
+        <a class="ref-link" href="https://www.elastic.co/docs/deploy-manage/monitor/stack-monitoring" target="_blank" rel="noreferrer">
+          Stack Monitoring overview
+        </a>
+        <a class="ref-link" href="https://www.elastic.co/docs/deploy-manage/monitor/stack-monitoring/kibana-monitoring-data" target="_blank" rel="noreferrer">
+          Access monitoring data in Kibana
+        </a>
+        <a class="ref-link" href="https://www.elastic.co/docs/deploy-manage/monitor/stack-monitoring/collecting-monitoring-data-with-metricbeat" target="_blank" rel="noreferrer">
+          Collecting data with Metricbeat
+        </a>
+        <a class="ref-link" href="https://www.elastic.co/docs/deploy-manage/monitor/monitoring-data/elasticsearch-metrics" target="_blank" rel="noreferrer">
+          Elasticsearch metrics reference
+        </a>
+        <a class="ref-link" href="https://www.elastic.co/docs/api/doc/elasticsearch/operation/operation-health-report" target="_blank" rel="noreferrer">
+          _health_report API (v8.7+ — best for agents)
+        </a>
+        <a class="ref-link" href="https://www.elastic.co/docs/api/doc/elasticsearch/operation/operation-nodes-stats" target="_blank" rel="noreferrer">
+          Node Stats API reference
+        </a>
+      </div>
+
+      <div class="card">
+        <h3>Key API endpoints the skills use</h3>
+        <div class="metric-row"><span><code>GET _cluster/health</code></span><span class="metric-val">First triage signal</span></div>
+        <div class="metric-row"><span><code>GET _health_report</code></span><span class="metric-val">Named indicators, agent-parseable</span></div>
+        <div class="metric-row"><span><code>GET _nodes/stats</code></span><span class="metric-val">JVM, thread pools, disk, OS</span></div>
+        <div class="metric-row"><span><code>GET _cat/shards?v</code></span><span class="metric-val">Unassigned shard location</span></div>
+        <p style="font-size:.79rem;margin-top:8px;color:var(--el-muted)">
+          Monitoring indices: <code>.monitoring-es-*</code> · <code>metrics-elasticsearch.*</code> · <code>logs-elasticsearch.*</code>
+        </p>
+      </div>
+    </div>
+  </div>
+
+  <div class="four-col" style="margin-top:16px">
+    <div class="stat-pill"><div class="val" style="color:var(--el-green)">Green</div><div class="lbl">All shards assigned, cluster healthy</div></div>
+    <div class="stat-pill"><div class="val" style="color:var(--el-yellow)">Yellow</div><div class="lbl">Replica shards unassigned, data safe</div></div>
+    <div class="stat-pill"><div class="val" style="color:var(--el-red)">Red</div><div class="lbl">Primary shards unassigned — data at risk</div></div>
+    <div class="stat-pill"><div class="val">85%+</div><div class="lbl">JVM heap threshold that triggers intervention</div></div>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════════════════════════════════════
+     SLIDE 3 — SKILLS 1 of 2
+     ══════════════════════════════════════════════════════════════════════ -->
+<div class="slide s-skills" data-slide="3">
+  <div class="section-kicker">Skills — 1 of 2</div>
+  <h2>Broad cluster health and resource pressure</h2>
+  <p style="max-width:700px;margin-bottom:18px">
+    Skills are the reusable troubleshooting units the agent invokes after reading monitoring data.
+    The first two skills answer the broadest question: <em>is this a cluster-wide issue or a resource bottleneck?</em>
+  </p>
+
+  <div class="two-col" style="gap:18px;margin-bottom:14px">
+
+    <!-- Skill 1 -->
+    <div class="skill-card">
+      <span class="skill-badge badge-cluster">Skill 01 — Cluster Health</span>
+      <h3>Elasticsearch Cluster Health Triage</h3>
+      <p>Diagnoses red/yellow cluster status, node loss, heap pressure, CPU spikes, and broad instability.
+        The first skill to invoke after any monitoring alert — it anchors whether the issue is cluster-wide
+        or localized before narrowing further.</p>
+      <div class="chip-row">
+        <span class="chip">cluster_health_summary</span>
+        <span class="chip">red_yellow_periods</span>
+        <span class="chip">node_last_seen</span>
+        <span class="chip">node_pressure_summary</span>
+        <span class="chip">jvm_gc_pressure</span>
+      </div>
+      <div class="hbox" style="margin-top:10px;font-size:.82rem">
+        <strong>ES docs:</strong>
+        <a href="https://www.elastic.co/guide/en/elasticsearch/reference/current/cluster-health.html" target="_blank">Cluster Health API</a> ·
+        <a href="https://www.elastic.co/guide/en/elasticsearch/reference/current/cluster-nodes-stats.html" target="_blank">Node Stats API</a> ·
+        <a href="https://www.elastic.co/guide/en/elasticsearch/reference/current/indices-segments.html" target="_blank">JVM GC in node stats</a>
+      </div>
+    </div>
+
+    <!-- Skill 2 -->
+    <div class="skill-card blue">
+      <span class="skill-badge badge-resource">Skill 02 — Resource Pressure</span>
+      <h3>Elasticsearch Resource Pressure Triage</h3>
+      <p>Converts "the cluster is slow" into a precise diagnosis: disk saturation, shard imbalance,
+        write/search queue build-up, or thread pool rejections. Best invoked when monitoring shows
+        latency or rejection spikes rather than cluster health changes.</p>
+      <div class="chip-row">
+        <span class="chip">disk_shard_pressure</span>
+        <span class="chip">thread_pool_rejections</span>
+        <span class="chip">node_pressure_summary</span>
+      </div>
+      <div class="hbox" style="margin-top:10px;font-size:.82rem">
+        <strong>ES docs:</strong>
+        <a href="https://www.elastic.co/guide/en/elasticsearch/reference/current/cluster-nodes-stats.html" target="_blank">Thread Pool Stats</a> ·
+        <a href="https://www.elastic.co/guide/en/elasticsearch/reference/current/cat-shards.html" target="_blank">Cat Shards API</a> ·
+        <a href="https://www.elastic.co/guide/en/elasticsearch/reference/current/cluster-allocation-explain.html" target="_blank">Allocation Explain</a>
+      </div>
+    </div>
+  </div>
+
+  <div class="hbox yellow" style="max-width:100%">
+    <strong>Routing rule:</strong> always run Skill 01 first. If cluster health is green and the symptom
+    is latency or rejections, move to Skill 02. The monitoring baseline query (slide 5) gives the agent
+    enough data to pick the right skill without asking the user.
+  </div>
+
+  <div class="ref-block" style="margin-top:14px">
+    <h3>Agent Builder — Skills docs</h3>
+    <a class="ref-link" href="https://www.elastic.co/docs/explore-analyze/ai-features/agent-builder/skills" target="_blank" rel="noreferrer">Skills in Agent Builder</a>
+    <a class="ref-link" href="https://www.elastic.co/docs/explore-analyze/ai-features/agent-builder/tools" target="_blank" rel="noreferrer">Tools in Agent Builder</a>
+    <a class="ref-link" href="https://www.elastic.co/docs/explore-analyze/ai-features/agent-builder/builtin-skills-reference" target="_blank" rel="noreferrer">Built-in skills reference</a>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════════════════════════════════════
+     SLIDE 4 — SKILLS 2 of 2
+     ══════════════════════════════════════════════════════════════════════ -->
+<div class="slide s-skills" data-slide="4">
+  <div class="section-kicker">Skills — 2 of 2</div>
+  <h2>Index, lifecycle, and log signal triage</h2>
+  <p style="max-width:700px;margin-bottom:18px">
+    These three skills narrow the investigation once the broad cluster picture is clear.
+    They bridge <em>"what is happening?"</em> to <em>"where exactly is it happening and why?"</em>
+  </p>
+
+  <div class="three-col" style="margin-bottom:14px">
+
+    <!-- Skill 3 -->
+    <div class="skill-card green">
+      <span class="skill-badge badge-index">Skill 03 — Index Pressure</span>
+      <h3>Index Pressure Triage</h3>
+      <p style="font-size:.82rem">Hot shards, allocation failures, index-specific query slowness,
+        and unassigned shard root causes. Avoids over-calling a cluster-wide issue when
+        blast radius is one index family.</p>
+      <div class="chip-row">
+        <span class="chip">index_pressure_analysis</span>
+        <span class="chip">unassigned_shard_analysis</span>
+        <span class="chip">hot_shards_analysis</span>
+        <span class="chip">slow_index_queries</span>
+      </div>
+      <div class="hbox" style="margin-top:8px;font-size:.79rem">
+        <a href="https://www.elastic.co/guide/en/elasticsearch/reference/current/indices-stats.html" target="_blank">Index Stats</a> ·
+        <a href="https://www.elastic.co/guide/en/elasticsearch/reference/current/index-modules-slowlog.html" target="_blank">Slow Log</a> ·
+        <a href="https://www.elastic.co/guide/en/elasticsearch/reference/current/cat-shards.html" target="_blank">Cat Shards</a>
+      </div>
+    </div>
+
+    <!-- Skill 4 -->
+    <div class="skill-card yellow">
+      <span class="skill-badge badge-lifecycle">Skill 04 — Lifecycle</span>
+      <h3>Index Lifecycle Triage</h3>
+      <p style="font-size:.82rem">Runaway index growth, mapping explosion, ILM policy stalls,
+        and indexing hotspots. Explains whether the problem is growth rate, policy config,
+        or workload shape — which determines the fix.</p>
+      <div class="chip-row">
+        <span class="chip">index_growth_analysis</span>
+        <span class="chip">mapping_explosion_detection</span>
+        <span class="chip">ilm_stuck_indices</span>
+        <span class="chip">indexing_hotspots</span>
+      </div>
+      <div class="hbox" style="margin-top:8px;font-size:.79rem">
+        <a href="https://www.elastic.co/guide/en/elasticsearch/reference/current/index-lifecycle-management.html" target="_blank">ILM overview</a> ·
+        <a href="https://www.elastic.co/guide/en/elasticsearch/reference/current/ilm-explain-lifecycle.html" target="_blank">Explain Lifecycle</a>
+      </div>
+    </div>
+
+    <!-- Skill 5 -->
+    <div class="skill-card pink">
+      <span class="skill-badge badge-logs">Skill 05 — Logs &amp; Security</span>
+      <h3>Logs and Security Triage</h3>
+      <p style="font-size:.82rem">Error log patterns, warnings, authentication failures,
+        authorization denials, and suspicious audit activity. The signal of last resort
+        when cluster metrics alone are ambiguous.</p>
+      <div class="chip-row">
+        <span class="chip">error_log_summary</span>
+        <span class="chip">audit_security_events</span>
+      </div>
+      <div class="hbox" style="margin-top:8px;font-size:.79rem">
+        <a href="https://www.elastic.co/guide/en/elasticsearch/reference/current/audit-event-types.html" target="_blank">Audit event types</a> ·
+        <a href="https://www.elastic.co/guide/en/elasticsearch/reference/current/logging.html" target="_blank">Logging configuration</a>
+      </div>
+    </div>
+  </div>
+
+  <div class="two-col">
+    <div class="hbox" style="margin:0">
+      <strong>Total tool coverage:</strong> 19 ES|QL query tools across 5 skills —
+      each mapped to a specific monitoring signal so the agent never fires blind.
+    </div>
+    <div class="hbox green" style="margin:0">
+      <strong>Key principle:</strong> skills are not general LLM prompts. Each one constrains
+      the agent to evidence already in the monitoring indices before it draws a conclusion.
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════════════════════════════════════
+     SLIDE 5 — QUERIES 1 of 2
+     ══════════════════════════════════════════════════════════════════════ -->
+<div class="slide s-queries" data-slide="5">
+  <div class="section-kicker">Tools &amp; Queries — 1 of 2</div>
+  <h2>Cluster baseline and health queries</h2>
+  <p style="max-width:700px;margin-bottom:16px">
+    Every triage session starts with a broad baseline read. These queries answer the first question fast:
+    is the issue cluster-wide, node-specific, or already narrow enough for a focused skill?
+  </p>
+
+  <div class="two-col" style="gap:16px">
+
+    <div class="query-card">
+      <span class="query-tag">workflow input</span>
+      <h3>Stack monitoring baseline (ES|QL)</h3>
+      <p style="font-size:.82rem;margin-bottom:6px">Runs once per triage session to orient the agent.
+        Returns the highest-pressure nodes first.</p>
+      <div class="code-block">FROM metrics-elasticsearch.node.stats-*
+| WHERE @timestamp &gt;= NOW() - 1h
+| WHERE elasticsearch.cluster.name IS NOT NULL
+| STATS
+    last_seen         = MAX(@timestamp),
+    avg_heap_pct      = AVG(elasticsearch.node.stats.jvm.mem.heap.used.pct),
+    max_heap_pct      = MAX(elasticsearch.node.stats.jvm.mem.heap.used.pct),
+    max_cpu_pct       = MAX(elasticsearch.node.stats.process.cpu.pct),
+    write_rejected    = MAX(elasticsearch.node.stats.thread_pool.write.rejected.count),
+    search_rejected   = MAX(elasticsearch.node.stats.thread_pool.search.rejected.count)
+  BY elasticsearch.cluster.name,
+     elasticsearch.node.name
+| SORT max_heap_pct DESC
+| LIMIT 10</div>
+      <div class="hbox green" style="font-size:.81rem">
+        Points the agent to the most-pressured node before any skill runs.
+        Source: <a href="https://www.elastic.co/guide/en/elasticsearch/reference/current/cluster-nodes-stats.html" target="_blank">Node Stats API</a>
+      </div>
+    </div>
+
+    <div>
+      <div class="query-card" style="margin-bottom:12px">
+        <span class="query-tag">cluster_health_summary</span>
+        <h3>Cluster health snapshot</h3>
+        <p style="font-size:.82rem;margin-bottom:6px">Used by <strong>Skill 01</strong>. Checks cluster-wide
+          status, node count changes, heap, CPU, and rejection totals over the last hour.</p>
+        <div class="code-block">FROM metrics-elasticsearch.cluster.stats-*
+| WHERE @timestamp &gt;= NOW() - 1h
+| STATS status = LAST(elasticsearch.cluster.stats.status),
+        node_count = MAX(elasticsearch.cluster.stats.nodes.count.total)
+  BY elasticsearch.cluster.name
+| SORT elasticsearch.cluster.name</div>
+        <div class="hbox" style="font-size:.81rem">
+          Answers: is the cluster itself unhealthy, or is the investigation at node level?
+          See <a href="https://www.elastic.co/guide/en/elasticsearch/reference/current/cluster-health.html" target="_blank">Cluster Health docs</a>.
+        </div>
+      </div>
+
+      <div class="query-card">
+        <span class="query-tag">jvm_gc_pressure</span>
+        <h3>GC pressure detection</h3>
+        <p style="font-size:.82rem;margin-bottom:6px">Used by <strong>Skill 01</strong>. Identifies nodes
+          spending excessive time in garbage collection — a leading indicator of heap exhaustion.</p>
+        <div class="code-block">FROM metrics-elasticsearch.node.stats-*
+| WHERE @timestamp &gt;= NOW() - 30m
+| STATS gc_collection_time =
+    MAX(elasticsearch.node.stats.jvm.gc.collectors.old.collection_time_in_millis)
+  BY elasticsearch.node.name
+| WHERE gc_collection_time &gt; 5000
+| SORT gc_collection_time DESC</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════════════════════════════════════
+     SLIDE 6 — QUERIES 2 of 2
+     ══════════════════════════════════════════════════════════════════════ -->
+<div class="slide s-queries" data-slide="6">
+  <div class="section-kicker">Tools &amp; Queries — 2 of 2</div>
+  <h2>Resource, index, lifecycle, and logs queries</h2>
+  <p style="max-width:700px;margin-bottom:16px">
+    These query families narrow a broad symptom into a specific resource, index, or policy answer.
+    The agent selects the right family based on what the baseline query returned.
+  </p>
+
+  <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px">
+
+    <div class="query-card">
+      <span class="query-tag">disk_shard_pressure &amp; thread_pool_rejections</span>
+      <h3>Resource pressure queries (Skills 01–02)</h3>
+      <p style="font-size:.82rem;margin-bottom:6px">Separates "the cluster is slow" from infrastructure-level saturation.</p>
+      <div class="code-block">-- disk pressure per node
+FROM metrics-elasticsearch.node.stats-*
+| WHERE @timestamp &gt;= NOW() - 30m
+| STATS disk_used_pct =
+    MAX(elasticsearch.node.stats.fs.total.available_in_bytes)
+      / MAX(elasticsearch.node.stats.fs.total.total_in_bytes) * 100
+  BY elasticsearch.node.name
+| SORT disk_used_pct ASC</div>
+      <div class="hbox" style="font-size:.81rem">
+        Ref: <a href="https://www.elastic.co/guide/en/elasticsearch/reference/current/cat-shards.html" target="_blank">Cat Shards</a> ·
+        <a href="https://www.elastic.co/guide/en/elasticsearch/reference/current/cluster-allocation-explain.html" target="_blank">Allocation Explain</a>
+      </div>
+    </div>
+
+    <div class="query-card">
+      <span class="query-tag">hot_shards_analysis &amp; slow_index_queries</span>
+      <h3>Index pressure queries (Skill 03)</h3>
+      <p style="font-size:.82rem;margin-bottom:6px">Finds the specific indices and shards generating most load.</p>
+      <div class="code-block">FROM metrics-elasticsearch.index.stats-*
+| WHERE @timestamp &gt;= NOW() - 15m
+| STATS indexing_rate =
+    MAX(elasticsearch.index.stats.indexing.index_total),
+    search_latency =
+    MAX(elasticsearch.index.stats.search.query_time_in_millis)
+  BY elasticsearch.index.name
+| SORT search_latency DESC
+| LIMIT 10</div>
+      <div class="hbox" style="font-size:.81rem">
+        Ref: <a href="https://www.elastic.co/guide/en/elasticsearch/reference/current/indices-stats.html" target="_blank">Index Stats API</a> ·
+        <a href="https://www.elastic.co/guide/en/elasticsearch/reference/current/index-modules-slowlog.html" target="_blank">Slow Log</a>
+      </div>
+    </div>
+
+    <div class="query-card">
+      <span class="query-tag">ilm_stuck_indices &amp; mapping_explosion_detection</span>
+      <h3>Lifecycle queries (Skill 04)</h3>
+      <p style="font-size:.82rem;margin-bottom:6px">Surfaces ILM stalls and runaway mapping growth before they cause data loss.</p>
+      <div class="code-block">-- ILM stuck indices
+FROM .monitoring-es-*
+| WHERE @timestamp &gt;= NOW() - 1h
+| WHERE elasticsearch.index.ilm.phase_time IS NOT NULL
+| STATS max_phase_time =
+    MAX(elasticsearch.index.ilm.phase_time)
+  BY elasticsearch.index.name, elasticsearch.index.ilm.phase
+| WHERE max_phase_time &gt; 300000  -- &gt;5 minutes
+| SORT max_phase_time DESC</div>
+      <div class="hbox" style="font-size:.81rem">
+        Ref: <a href="https://www.elastic.co/guide/en/elasticsearch/reference/current/ilm-explain-lifecycle.html" target="_blank">Explain Lifecycle API</a> ·
+        <a href="https://www.elastic.co/guide/en/elasticsearch/reference/current/index-lifecycle-management.html" target="_blank">ILM overview</a>
+      </div>
+    </div>
+
+    <div class="query-card">
+      <span class="query-tag">error_log_summary &amp; audit_security_events</span>
+      <h3>Logs and security queries (Skill 05)</h3>
+      <p style="font-size:.82rem;margin-bottom:6px">Surfaces error patterns and auth failures when metrics are clean but symptoms persist.</p>
+      <div class="code-block">FROM logs-elasticsearch.server-*
+| WHERE @timestamp &gt;= NOW() - 1h
+| WHERE log.level IN ("ERROR", "WARN")
+| STATS error_count = COUNT(*)
+  BY log.logger, message
+| SORT error_count DESC
+| LIMIT 20</div>
+      <div class="hbox" style="font-size:.81rem">
+        Ref: <a href="https://www.elastic.co/guide/en/elasticsearch/reference/current/audit-event-types.html" target="_blank">Audit event types</a> ·
+        <a href="https://www.elastic.co/guide/en/elasticsearch/reference/current/logging.html" target="_blank">Logging config</a>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════════════════════════════════════
+     SLIDE 7 — AGENT BUILDER
+     ══════════════════════════════════════════════════════════════════════ -->
+<div class="slide s-agent" data-slide="7">
+  <div class="section-kicker">Agent Builder Setup</div>
+  <h2>Package the triage behavior into a reusable agent</h2>
+  <p style="max-width:700px;margin-bottom:18px">
+    Agent Builder in Kibana is where the routing logic lives. Instead of re-prompting the same triage
+    steps in every chat session, you define the agent once — attach skills, set response format,
+    scope permissions — and the behavior stays consistent and reusable.
+  </p>
+
+  <div class="two-col" style="gap:18px">
+    <div>
+      <div class="card" style="margin-bottom:14px">
+        <h3>Setup sequence</h3>
+        <div class="timeline">
+          <div class="timeline-step">
+            <div class="timeline-num">1</div>
+            <div>
+              <strong>Create the agent in Kibana</strong>
+              <p>Define the cluster triage role, system prompt, and structured response format so
+                downstream workflows can parse the output without guessing.</p>
+            </div>
+          </div>
+          <div class="timeline-step">
+            <div class="timeline-num">2</div>
+            <div>
+              <strong>Attach skills and query tools</strong>
+              <p>Connect all five skills and their 19 underlying ES|QL query tools.
+                The agent selects the right skill based on the monitoring baseline output.</p>
+            </div>
+          </div>
+          <div class="timeline-step">
+            <div class="timeline-num">3</div>
+            <div>
+              <strong>Align permissions with monitoring scope</strong>
+              <p>Use the same Kibana space. Grant least-privilege read access to monitoring
+                indices only — the agent should observe, not mutate cluster state.</p>
+            </div>
+          </div>
+          <div class="timeline-step">
+            <div class="timeline-num">4</div>
+            <div>
+              <strong>Validate the routing</strong>
+              <p>Test with known cluster states — yellow due to replica, red due to primary loss,
+                high heap — to confirm the agent selects the correct skill each time.</p>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div>
+      <div class="ref-block" style="margin-bottom:14px">
+        <h3>Elastic documentation</h3>
+        <a class="ref-link" href="https://www.elastic.co/docs/explore-analyze/ai-features/elastic-agent-builder" target="_blank" rel="noreferrer">
+          Elastic Agent Builder overview
+        </a>
+        <a class="ref-link" href="https://www.elastic.co/docs/explore-analyze/ai-features/agent-builder/kibana-api" target="_blank" rel="noreferrer">
+          Agent Builder Kibana API
+        </a>
+        <a class="ref-link" href="https://www.elastic.co/docs/explore-analyze/ai-features/agent-builder/skills" target="_blank" rel="noreferrer">
+          Skills in Agent Builder
+        </a>
+        <a class="ref-link" href="https://www.elastic.co/docs/explore-analyze/ai-features/agent-builder/tools" target="_blank" rel="noreferrer">
+          Tools in Agent Builder
+        </a>
+        <a class="ref-link" href="https://www.elastic.co/docs/explore-analyze/ai-features/agent-builder/builtin-skills-reference" target="_blank" rel="noreferrer">
+          Built-in skills reference
+        </a>
+      </div>
+
+      <div class="card">
+        <h3>Why Agent Builder over ad-hoc chat</h3>
+        <div class="metric-row"><span>Routing logic</span><span class="metric-val">Defined once, reused everywhere</span></div>
+        <div class="metric-row"><span>Response format</span><span class="metric-val">Stable JSON — workflow-parseable</span></div>
+        <div class="metric-row"><span>Skill scope</span><span class="metric-val">Constrained per troubleshooting path</span></div>
+        <div class="metric-row"><span>Permissions</span><span class="metric-val">Kibana space + index-level control</span></div>
+        <div class="metric-row"><span>MCP exposure</span><span class="metric-val">One endpoint, all external clients</span></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════════════════════════════════════
+     SLIDE 8 — MCP
+     ══════════════════════════════════════════════════════════════════════ -->
+<div class="slide s-mcp" data-slide="8">
+  <div class="section-kicker">Exposing Agents with MCP</div>
+  <h2>MCP is the handoff layer to external clients</h2>
+  <p style="max-width:760px;margin-bottom:16px">
+    Once the agent is packaged in Agent Builder, enable the MCP server in Kibana and point any MCP-compatible
+    client at the endpoint. The agent logic stays centralized — external clients just see a clean tool interface.
+  </p>
+
+  <div class="two-col" style="gap:18px">
+
+    <!-- Left: what it enables + steps -->
+    <div>
+      <div class="skill-card" style="margin-bottom:12px">
+        <h3 style="color:var(--el-teal);margin-bottom:10px">What MCP enables</h3>
+        <div class="metric-row"><span>Claude Desktop / Claude Code</span><span class="metric-val">Direct tool invocation from chat</span></div>
+        <div class="metric-row"><span>Cursor / VS Code</span><span class="metric-val">Inline triage during incident response</span></div>
+        <div class="metric-row"><span>LangChain / LlamaIndex</span><span class="metric-val">Composable triage tool in pipelines</span></div>
+        <div class="metric-row"><span>Agent-to-Agent (A2A)</span><span class="metric-val">Triage agent as a sub-agent for orchestrators</span></div>
+        <div class="hbox green" style="margin-top:10px;font-size:.82rem">
+          <strong>Core benefit:</strong> one MCP endpoint, all clients — no rebuilding the logic outside Kibana.
+        </div>
+      </div>
+
+      <div class="ref-block">
+        <h3>Elastic documentation</h3>
+        <a class="ref-link" href="https://www.elastic.co/docs/explore-analyze/ai-features/agent-builder/mcp-server/" target="_blank" rel="noreferrer">MCP server in Agent Builder</a>
+        <a class="ref-link" href="https://www.elastic.co/docs/explore-analyze/ai-features/agent-builder/a2a-server" target="_blank" rel="noreferrer">Agent-to-Agent (A2A) server</a>
+        <a class="ref-link" href="https://www.elastic.co/docs/solutions/search/mcp" target="_blank" rel="noreferrer">Elastic AI-powered features and MCP</a>
+      </div>
+    </div>
+
+    <!-- Right: sample configs -->
+    <div>
+      <div class="query-card" style="margin-bottom:12px">
+        <span class="query-tag">claude_desktop_config.json</span>
+        <h3>Claude Desktop — stdio transport</h3>
+        <div class="code-block">{
+  "mcpServers": {
+    "elastic-cluster-triage": {
+      "command": "npx",
+      "args": ["-y", "@elastic/mcp-server-kibana"],
+      "env": {
+        "KIBANA_URL": "https://&lt;your-kibana-host&gt;",
+        "KIBANA_API_KEY": "&lt;base64-encoded-id:api_key&gt;"
+      }
+    }
+  }
+}</div>
+        <p style="font-size:.79rem;color:var(--el-muted);margin-top:6px">
+          Generates a Kibana API key under <strong>Stack Management → API Keys</strong>.
+          Scope to read-only on monitoring indices for least privilege.
+        </p>
+      </div>
+
+      <div class="query-card">
+        <span class="query-tag">Agent Builder MCP endpoint — SSE transport</span>
+        <h3>Generic SSE client (Cursor, LangChain, etc.)</h3>
+        <div class="code-block">{
+  "mcpServers": {
+    "elastic-cluster-triage": {
+      "url": "https://&lt;kibana-host&gt;/api/agents/&lt;agent-id&gt;/mcp",
+      "headers": {
+        "Authorization": "ApiKey &lt;base64-encoded-id:api_key&gt;",
+        "kbn-xsrf": "true",
+        "Content-Type": "application/json"
+      }
+    }
+  }
+}</div>
+        <p style="font-size:.79rem;color:var(--el-muted);margin-top:6px">
+          <code>agent-id</code> is found in Agent Builder → agent detail page URL.
+          The SSE endpoint streams tool results back as the agent runs each skill query.
+        </p>
+      </div>
+    </div>
+
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════════════════════════════════════
+     SLIDE 9 — MCP APP FOR CLAUDE DESKTOP
+     ══════════════════════════════════════════════════════════════════════ -->
+<div class="slide s-mcpapp" data-slide="9">
+  <div class="section-kicker">Claude Desktop Extension</div>
+  <h2>Rich inline visualizations — packaged as a <code style="font-size:1.2rem">.mcpb</code> extension</h2>
+  <p style="max-width:780px;margin-bottom:16px">
+    The triage agent ships as a self-contained <strong>.mcpb</strong> bundle: 22 diagnostic tools and 5
+    Kibana-style HTML panels that render directly inside Claude Desktop. No browser tab. No separate server.
+  </p>
+
+  <div class="two-col" style="gap:18px">
+
+    <!-- Left: build, install, config -->
+    <div>
+      <div class="skill-card" style="margin-bottom:12px">
+        <h3 style="color:var(--el-teal)">One-command build &amp; install</h3>
+        <div class="code-block">bash scripts/build-mcpb.sh
+# → elastic-cluster-triage-agent.mcpb (~16 MB)
+# Double-click  →  installs in Claude Desktop</div>
+        <div class="metric-row" style="margin-top:10px"><span>Diagnostic tools</span><span class="metric-val">22 (19 triage + 3 timeline)</span></div>
+        <div class="metric-row"><span>Inline HTML views</span><span class="metric-val">5 self-contained panels</span></div>
+        <div class="metric-row"><span>Transport</span><span class="metric-val">stdio — local, no network config</span></div>
+        <div class="metric-row"><span>Build stack</span><span class="metric-val">TypeScript · Vite · esbuild · mcpb</span></div>
+      </div>
+
+      <div class="query-card">
+        <span class="query-tag">manifest.json — user_config fields</span>
+        <h3>Prompted at install time</h3>
+        <div class="code-block">{
+  "elasticsearch_url":     "https://&lt;es-host&gt;:9200",
+  "elasticsearch_api_key": "&lt;base64-id:key&gt;",
+  "kibana_url":            "https://&lt;kb-host&gt;:5601",
+  "kibana_api_key":        "&lt;base64-id:key&gt;"
+}</div>
+        <p style="font-size:.79rem;color:var(--el-muted);margin-top:6px">
+          Kibana fields are optional — required only for Kibana REST calls.
+          ES API key scoped read-only to <code>.monitoring-es-*</code> is sufficient for all triage tools.
+        </p>
+      </div>
+    </div>
+
+    <!-- Right: chart showcase + architecture -->
+    <div>
+      <div class="card" style="margin-bottom:12px">
+        <h3 style="color:var(--el-teal);margin-bottom:12px">What renders inline in Claude Desktop</h3>
+        <div class="two-col" style="gap:8px">
+          <div class="hbox" style="margin:0;font-size:.82rem"><strong>📈 Area Charts</strong><br/>Heap %, CPU, store-size growth with threshold lines &amp; multi-series</div>
+          <div class="hbox" style="margin:0;font-size:.82rem"><strong>⏱ Gauges</strong><br/>Kibana-style circular arc: heap %, disk %, CPU at a glance</div>
+          <div class="hbox" style="margin:0;font-size:.82rem"><strong>📊 Histograms</strong><br/>GC time, rejection counts, error frequency as bar distributions</div>
+          <div class="hbox" style="margin:0;font-size:.82rem"><strong>🔵 Scatter Plots</strong><br/>Indexing ops vs latency, docs vs store size — outlier detection</div>
+          <div class="hbox green" style="margin:0;font-size:.82rem"><strong>🟩 Status Heatmap</strong><br/>Lens-style timeline: green / yellow / red cells per 5-min bucket</div>
+          <div class="hbox green" style="margin:0;font-size:.82rem"><strong>↗ Investigation Actions</strong><br/>Drill-down buttons re-invoke Claude with the next diagnostic prompt</div>
+        </div>
+      </div>
+
+      <div class="card">
+        <h3 style="color:var(--el-teal);margin-bottom:10px">Data flow inside the bundle</h3>
+        <div style="display:flex;align-items:center;gap:7px;flex-wrap:wrap;font-size:.82rem;margin-bottom:10px">
+          <span class="flow-pill sm" style="color:var(--el-teal)">ES|QL query</span>
+          <span style="color:var(--el-muted)">→</span>
+          <span class="flow-pill sm" style="color:#7BC8FF">JSON payload</span>
+          <span style="color:var(--el-muted)">→</span>
+          <span class="flow-pill sm" style="color:var(--el-green)">React + SVG</span>
+          <span style="color:var(--el-muted)">→</span>
+          <span class="flow-pill sm" style="color:var(--el-purple)">mcp-app.html</span>
+          <span style="color:var(--el-muted)">→</span>
+          <span class="flow-pill sm" style="color:var(--el-yellow)">Claude iframe</span>
+        </div>
+        <p style="font-size:.82rem">
+          Each view is a <strong>~210 KB self-contained HTML</strong> compiled by Vite +
+          <code>vite-plugin-singlefile</code> — zero external requests, fully offline.
+          The React component picks the correct chart from a <code>tool</code> discriminator
+          on the JSON payload. <code>registerAppTool</code> links each tool to its view.
+        </p>
+      </div>
+    </div>
+
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════════════════════════════════════
+     SLIDE 10 — WORKFLOWS
+     ══════════════════════════════════════════════════════════════════════ -->
+<div class="slide s-workflows" data-slide="10">
+  <div class="section-kicker">Workflows</div>
+  <h2>Automate the repetitive triage loop</h2>
+  <p style="max-width:760px;margin-bottom:14px">
+    Remove the human trigger. Two entry points feed the same pipeline — a <strong>scheduled trigger</strong>
+    (interval or RRule) for recurring polling, or an <strong>alert trigger</strong> wired to an ML anomaly
+    detection rule for event-driven triage. Both converge on the same <code>ai.agent</code> step.
+  </p>
+
+  <div class="two-col" style="gap:18px">
+    <div>
+      <div class="card" style="margin-bottom:0">
+        <h3 style="color:var(--el-teal)">Triage workflow shape</h3>
+        <div class="timeline" style="margin-top:10px">
+
+          <!-- Step A — two trigger paths -->
+          <div class="timeline-step">
+            <div class="timeline-num" style="background:linear-gradient(135deg,var(--el-red),var(--el-yellow))">A</div>
+            <div style="flex:1">
+              <strong>Trigger <span style="font-weight:400;color:var(--el-muted);font-size:.82rem">(choose one)</span></strong>
+              <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:6px;margin-top:6px">
+
+                <div class="trigger-pill t-yellow">
+                  <div class="tp-label" style="color:var(--el-yellow)">⏱ Scheduled</div>
+                  <div class="tp-desc">Time-based recurring poll · Kibana Workflows</div>
+                  <div class="tp-code" style="color:var(--el-teal)">type: scheduled<br>every: 15m</div>
+                  <div class="tp-sub">interval or RRule · proactive</div>
+                </div>
+
+                <div class="trigger-pill t-blue">
+                  <div class="tp-label" style="color:var(--el-blue)">🔔 Kibana Alert</div>
+                  <div class="tp-desc">Stack monitoring rule · threshold breach</div>
+                  <div class="tp-code" style="color:var(--el-blue)">type: alert<br>cluster_health → red</div>
+                  <div class="tp-sub">event-driven · rule-based</div>
+                </div>
+
+                <div class="trigger-pill t-red">
+                  <div class="tp-label" style="color:var(--el-red)">🤖 ML Anomaly</div>
+                  <div class="tp-desc">ML rule fires when <code>record_score ≥ 75</code></div>
+                  <div class="tp-code" style="color:var(--el-red)">type: alert<br>xpack.ml.anomaly_detection_alert</div>
+                  <div class="tp-sub">critical severity · near real-time</div>
+                </div>
+
+              </div>
+              <!-- severity scale (applies to alert triggers) -->
+              <div style="display:flex;gap:4px;margin-top:7px;align-items:center;flex-wrap:wrap">
+                <span style="font-size:.68rem;color:var(--el-muted);margin-right:2px">ML severity:</span>
+                <span class="sev-chip sev-n">warning 0–24</span>
+                <span class="sev-chip sev-g">minor 25–49</span>
+                <span class="sev-chip sev-o">major 50–74</span>
+                <span class="sev-chip sev-r">critical 75–100</span>
+              </div>
+            </div>
+          </div>
+
+          <div class="timeline-step">
+            <div class="timeline-num" style="background:linear-gradient(135deg,var(--el-blue),var(--el-teal))">B</div>
+            <div>
+              <strong>Query</strong>
+              <p>Workflow runs the ES|QL monitoring baseline query against the monitoring indices.</p>
+            </div>
+          </div>
+          <div class="timeline-step">
+            <div class="timeline-num" style="background:linear-gradient(135deg,var(--el-teal),var(--el-green))">C</div>
+            <div>
+              <strong>Agent invocation</strong>
+              <p>Query results passed to the triage agent. Agent selects the correct skill, runs the
+                relevant query tools, and returns a structured summary.</p>
+            </div>
+          </div>
+          <div class="timeline-step">
+            <div class="timeline-num" style="background:linear-gradient(135deg,var(--el-green),var(--el-blue))">D</div>
+            <div>
+              <strong>Delivery</strong>
+              <p>Workflow posts concise triage output to Slack, PagerDuty, or the team's
+                incident channel — no human prompt required.</p>
+            </div>
+          </div>
+
+        </div>
+      </div>
+    </div>
+
+    <div>
+      <!-- Trigger comparison card -->
+      <div class="card" style="margin-bottom:12px">
+        <h3 style="color:var(--el-teal);margin-bottom:10px">Trigger comparison</h3>
+
+        <div class="metric-row"><span style="font-weight:600;color:var(--el-yellow)">⏱ Scheduled</span><span class="metric-val" style="color:var(--el-yellow)">Proactive · recurring</span></div>
+        <div class="metric-row" style="font-size:.80rem"><span style="padding-left:4px;color:var(--el-muted)">Config</span><span><code>type: scheduled</code> · <code>every: 15m</code> or RRule</span></div>
+        <div class="metric-row" style="font-size:.80rem;border-bottom:1px solid var(--el-border)"><span style="padding-left:4px;color:var(--el-muted)">When to use</span><span>Baseline monitoring · no alert dependency</span></div>
+
+        <div class="metric-row" style="margin-top:6px"><span style="font-weight:600;color:var(--el-blue)">🔔 Kibana Alert</span><span class="metric-val" style="color:var(--el-blue)">Reactive · rule-based</span></div>
+        <div class="metric-row" style="font-size:.80rem"><span style="padding-left:4px;color:var(--el-muted)">Config</span><span><code>type: alert</code> · any Kibana rule → Actions tab</span></div>
+        <div class="metric-row" style="font-size:.80rem;border-bottom:1px solid var(--el-border)"><span style="padding-left:4px;color:var(--el-muted)">When to use</span><span>Threshold breach · cluster health red/yellow</span></div>
+
+        <div class="metric-row" style="margin-top:6px"><span style="font-weight:600;color:var(--el-red)">🤖 ML Anomaly</span><span class="metric-val" style="color:var(--el-red)">Reactive · ML-driven</span></div>
+        <div class="metric-row" style="font-size:.80rem"><span style="padding-left:4px;color:var(--el-muted)">Rule type</span><span><code style="font-size:.77rem">xpack.ml.anomaly_detection_alert</code></span></div>
+        <div class="metric-row" style="font-size:.80rem"><span style="padding-left:4px;color:var(--el-muted)">Threshold</span><span><code>record_score ≥ 75</code> → critical severity</span></div>
+        <div class="metric-row" style="font-size:.80rem"><span style="padding-left:4px;color:var(--el-muted)">When to use</span><span>Learned anomaly · no static threshold needed</span></div>
+      </div>
+
+      <div class="ref-block" style="margin-bottom:12px">
+        <h3>Elastic documentation</h3>
+        <a class="ref-link" href="https://www.elastic.co/docs/api/doc/kibana/group/endpoint-workflows" target="_blank" rel="noreferrer">Workflows API documentation</a>
+        <a class="ref-link" href="https://www.elastic.co/docs/explore-analyze/workflows/steps/kibana" target="_blank" rel="noreferrer">Kibana action steps in Workflows</a>
+        <a class="ref-link" href="https://www.elastic.co/docs/deploy-manage/monitor/stack-monitoring/kibana-monitoring-data" target="_blank" rel="noreferrer">Monitoring data in Kibana</a>
+        <a class="ref-link" href="https://www.elastic.co/guide/en/kibana/current/xpack-ml.html" target="_blank" rel="noreferrer">ML anomaly detection in Kibana</a>
+        <a class="ref-link" href="https://www.elastic.co/docs/explore-analyze/workflows/triggers/scheduled-triggers" target="_blank" rel="noreferrer">Kibana Workflows — scheduled triggers</a>
+      </div>
+
+      <div class="card">
+        <h3>What changes when you add workflows</h3>
+        <div class="metric-row"><span>Before</span><span class="metric-val" style="color:var(--el-muted)">Human asks → agent responds</span></div>
+        <div class="metric-row"><span>After</span><span class="metric-val">Alert fires → agent delivers</span></div>
+        <div class="metric-row"><span>Chat value</span><span class="metric-val">Higher-order judgment only</span></div>
+        <div class="metric-row"><span>Toil eliminated</span><span class="metric-val">Repeated baseline queries</span></div>
+        <div class="metric-row"><span>Format</span><span class="metric-val">Structured output, workflow-parseable</span></div>
+        <div class="hbox" style="margin-top:10px;font-size:.82rem">
+          Workflows are read-only by default. They observe and report —
+          remediation still requires explicit human approval.
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════════════════════════════════════
+     SLIDE 11 — TAKEAWAYS
+     ══════════════════════════════════════════════════════════════════════ -->
+<div class="slide s-takeaways" data-slide="11">
+  <div class="section-kicker">Takeaways</div>
+  <h2>Stack monitoring feeds the evidence.<br/>Skills shape the interpretation.<br/>MCP and Workflows close the loop.</h2>
+
+  <div class="findings">
+    <div class="finding">
+      <div class="num" style="color:var(--el-teal)">1st</div>
+      <div class="desc">Always read Stack Monitoring before the agent reasons.
+        Evidence must precede interpretation — skipping this step produces hallucinated diagnoses.</div>
+    </div>
+    <div class="finding">
+      <div class="num" style="color:var(--el-green)">5</div>
+      <div class="desc">Skills split the problem space cleanly: cluster health, resource pressure,
+        index pressure, lifecycle, and logs/security. Never overlap them.</div>
+    </div>
+    <div class="finding">
+      <div class="num" style="color:var(--el-yellow)">19</div>
+      <div class="desc">ES|QL query tools across the five skills — each mapped to a specific monitoring
+        signal so the agent cannot reason without data.</div>
+    </div>
+    <div class="finding">
+      <div class="num" style="color:#7BC8FF">MCP</div>
+      <div class="desc">Expose the agent once via MCP to reach Claude Desktop, Cursor, and LangChain
+        without duplicating the triage logic outside Kibana.</div>
+    </div>
+    <div class="finding">
+      <div class="num" style="color:var(--el-pink)">.mcpb</div>
+      <div class="desc">Package the same ES|QL tools as a local Claude Desktop extension — 22 tools,
+        5 Kibana-style views, inline charts and drill-down actions, no Kibana dependency at runtime.</div>
+    </div>
+  </div>
+
+  <div class="two-col" style="margin-top:18px;gap:18px">
+    <div class="card">
+      <h3>Full workflow path</h3>
+      <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-top:6px">
+        <span class="flow-pill sm" style="color:var(--el-teal)">Stack Monitoring</span>
+        <span style="color:var(--el-muted)">→</span>
+        <span class="flow-pill sm" style="color:#7BC8FF">Tools</span>
+        <span style="color:var(--el-muted)">→</span>
+        <span class="flow-pill sm" style="color:var(--el-green)">Skills</span>
+        <span style="color:var(--el-muted)">→</span>
+        <span class="flow-pill sm" style="color:var(--el-purple)">Agent</span>
+        <span style="color:var(--el-muted)">→</span>
+        <span class="flow-pill sm" style="color:var(--el-yellow)">Workflows</span>
+      </div>
+      <p style="margin-top:8px;font-size:.82rem">Each step reduces toil and raises evidence quality. Monotonous daily
+        cluster questions are handled autonomously — chat is reserved for complex judgment calls.</p>
+
+      <div style="margin-top:12px;padding-top:12px;border-top:1px solid var(--el-border)">
+        <div style="font-size:.72rem;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:var(--el-muted);margin-bottom:6px">MCP server only (Kibana-hosted)</div>
+        <div style="display:flex;align-items:center;gap:7px;flex-wrap:wrap">
+          <span class="flow-pill sm" style="color:var(--el-teal)">Agent Builder</span>
+          <span style="color:var(--el-muted)">→</span>
+          <span class="flow-pill sm" style="color:#7BC8FF">MCP endpoint</span>
+          <span style="color:var(--el-muted)">→</span>
+          <span class="flow-pill sm" style="color:var(--el-green)">Claude Desktop / Cursor</span>
+          <span style="color:var(--el-muted)">→</span>
+          <span class="flow-pill sm" style="color:var(--el-purple)">Tool call → response</span>
+        </div>
+        <p style="margin-top:6px;font-size:.82rem">Agent logic lives in Kibana. External clients see a clean tool
+          interface via SSE — no code to maintain outside Elastic.</p>
+      </div>
+
+      <div style="margin-top:12px;padding-top:12px;border-top:1px solid var(--el-border)">
+        <div style="font-size:.72rem;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:var(--el-muted);margin-bottom:6px">MCP app (.mcpb) — local extension</div>
+        <div style="display:flex;align-items:center;gap:7px;flex-wrap:wrap">
+          <span class="flow-pill sm" style="color:var(--el-teal)">ES|QL → data</span>
+          <span style="color:var(--el-muted)">→</span>
+          <span class="flow-pill sm" style="color:#7BC8FF">JSON payload</span>
+          <span style="color:var(--el-muted)">→</span>
+          <span class="flow-pill sm" style="color:var(--el-green)">React + SVG charts</span>
+          <span style="color:var(--el-muted)">→</span>
+          <span class="flow-pill sm" style="color:var(--el-pink)">Inline Claude view</span>
+          <span style="color:var(--el-muted)">→</span>
+          <span class="flow-pill sm" style="color:var(--el-purple)">↗ Drill-down actions</span>
+        </div>
+        <p style="margin-top:6px;font-size:.82rem">Kibana-style visualizations render <em>inside</em> Claude Desktop.
+          No browser. No separate server. Double-click <code>.mcpb</code> to install.</p>
+      </div>
+    </div>
+
+    <div class="ref-block">
+      <h3>All reference links</h3>
+      <a class="ref-link" href="https://www.elastic.co/docs/deploy-manage/monitor" target="_blank" rel="noreferrer">Stack Monitoring overview</a>
+      <a class="ref-link" href="https://www.elastic.co/docs/explore-analyze/ai-features/elastic-agent-builder" target="_blank" rel="noreferrer">Elastic Agent Builder</a>
+      <a class="ref-link" href="https://www.elastic.co/docs/explore-analyze/ai-features/agent-builder/mcp-server/" target="_blank" rel="noreferrer">MCP server in Agent Builder</a>
+      <a class="ref-link" href="https://www.elastic.co/docs/api/doc/kibana/group/endpoint-workflows" target="_blank" rel="noreferrer">Workflows API</a>
+      <a class="ref-link" href="https://www.elastic.co/guide/en/elasticsearch/reference/current/cluster-health.html" target="_blank" rel="noreferrer">Cluster Health API</a>
+      <a class="ref-link" href="https://www.elastic.co/guide/en/elasticsearch/reference/current/index-lifecycle-management.html" target="_blank" rel="noreferrer">ILM documentation</a>
+    </div>
+  </div>
+
+  <p style="margin-top:16px;font-size:.76rem;color:#2A3045;text-align:right">
+    Elastic Cluster Triage — Day 2 Workflow · 2026
+  </p>
+</div>
+
+</div><!-- /.deck -->
+
+<!-- ── Bottom slide nav ─────────────────────────────────────────────────── -->
+<div class="slide-nav">
+  <button class="snav-btn" data-slide="1"><span class="snav-num">01</span>Overview</button>
+  <button class="snav-btn" data-slide="2"><span class="snav-num">02</span>Stack Monitoring</button>
+  <button class="snav-btn" data-slide="3"><span class="snav-num">03</span>Skills 1/2</button>
+  <button class="snav-btn" data-slide="4"><span class="snav-num">04</span>Skills 2/2</button>
+  <button class="snav-btn" data-slide="5"><span class="snav-num">05</span>Queries 1/2</button>
+  <button class="snav-btn" data-slide="6"><span class="snav-num">06</span>Queries 2/2</button>
+  <button class="snav-btn" data-slide="7"><span class="snav-num">07</span>Agent Builder</button>
+  <button class="snav-btn" data-slide="8"><span class="snav-num">08</span>MCP</button>
+  <button class="snav-btn" data-slide="9"><span class="snav-num">09</span>MCP App</button>
+  <button class="snav-btn" data-slide="10"><span class="snav-num">10</span>Workflows</button>
+  <button class="snav-btn" data-slide="11"><span class="snav-num">11</span>Takeaways</button>
+</div>
+
+<!-- ── Prev / Next / Theme / PPTX / PDF ──────────────────────────────────── -->
+<div class="nav">
+  <button id="prevBtn" disabled>&#8592; Prev</button>
+  <span class="slide-counter" id="slideCounter">1 / 11</span>
+  <button id="nextBtn">Next &#8594;</button>
+  <button class="theme-btn" id="themeBtn" title="Toggle light / dark theme"></button>
+  <button class="pdf-btn" id="fsBtn" title="Toggle fullscreen (F)">&#x26F6;</button>
+  <button class="pptx-btn" id="pptxBtn" title="Export to PowerPoint (.pptx)">&#11015; PPTX</button>
+  <button class="pdf-btn"  id="pdfBtn"  title="Print / Save as PDF">&#128438; PDF</button>
+</div>
+
+<!-- ── Elastic logo ───────────────────────────────────────────────────────── -->
+<div class="elastic-logo">
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 500 171.72" style="height:22px;width:auto" aria-label="Elastic">
+    <defs><style>.el-w{fill:#fff}.el-y{fill:#fec514}.el-t{fill:#00bfb3}.el-p{fill:#f04e98}.el-b{fill:#1ba9f5}.el-g{fill:#93c90e}.el-db{fill:#07c}</style></defs>
+    <path class="el-w" d="M240.06,116.77l3.45-.35.23,7a171.44,171.44,0,0,1-23.16,1.9q-12.83,0-18.17-7.43t-5.35-23.1q0-31.23,24.83-31.24,12,0,17.93,6.71t5.94,21.09l-.47,6.77h-39.2q0,9.86,3.56,14.61t12.42,4.75Q230.91,117.49,240.06,116.77ZM236.85,91q0-10.92-3.5-15.44T222,71.05q-7.9,0-11.88,4.75T206,91Z"/>
+    <path class="el-w" d="M258.18,125.24V46.41h8.91v78.83Z"/>
+    <path class="el-w" d="M323.19,82.69v30c0,3,7.4,2.85,7.4,2.85l-.46,7.87c-6.26,0-11.44.52-14.55-2.49a51.72,51.72,0,0,1-21.37,4.46q-8.19,0-12.47-4.64t-4.28-13.3q0-8.67,4.4-12.77t13.78-5l18.64-1.79v-5.1q0-6.06-2.61-8.67a9.61,9.61,0,0,0-7.13-2.62l-23.4,0V63.56H304q10.1,0,14.67,4.63T323.19,82.69Zm-36.58,24.23q0,10.92,9,10.92a48,48,0,0,0,15.91-2.73l2.73-1V94.56L296.7,96.23q-5.34.47-7.72,3.08C287.4,101.06,286.61,103.59,286.61,106.92Z"/>
+    <path class="el-w" d="M358,71.52q-12.94,0-12.95,9,0,4.15,3,5.88T361.52,90q10.58,1.85,15,5.17t4.39,12.47q0,9.15-5.87,13.42t-17.17,4.28c-4.91,0-21.29-1.82-21.29-1.82l.47-7.72c9.42.91,16.23,1.58,20.82,1.58s8.1-.73,10.51-2.2,3.63-3.92,3.63-7.36-1-5.78-3.09-7-6.58-2.4-13.54-3.5-11.92-2.74-14.85-4.87-4.39-6.1-4.39-11.88,2-10.06,6.11-12.83,9.17-4.16,15.27-4.16c4.82,0,21.58,1.23,21.58,1.23v7.77C370.26,72.16,363,71.52,358,71.52Z"/>
+    <path class="el-w" d="M423.85,72.47H405v28.39q0,10.22,1.49,13.42c1,2.14,3.34,3.21,7.07,3.21l10.57-.72.59,7.37a81.52,81.52,0,0,1-12.11,1.31q-9.27,0-12.83-4.52t-3.57-17.22V72.47h-8.43V64.75h8.43V46.58H405V64.75h18.89Z"/>
+    <path class="el-w" d="M436.23,56.81V46.47h8.91V56.81Zm0,68.43V65.12h8.91v60.12Z"/>
+    <path class="el-w" d="M483.73,63.56A103,103,0,0,1,497,65l2.85.35-.36,7.25a140,140,0,0,0-14-1.07q-10.1,0-13.72,4.81t-3.62,17.82q0,13,3.38,18.11t14.08,5.11l14-1.07.36,7.36a122.15,122.15,0,0,1-16.51,1.67q-13.89,0-19.18-7.13t-5.29-24q0-16.94,5.7-23.76T483.73,63.56Z"/>
+    <path class="el-w" d="M172.39,90A33.94,33.94,0,0,0,150,58a48.21,48.21,0,0,0,.9-9.26A48.69,48.69,0,0,0,62.68,20.2,25.85,25.85,0,0,0,22.62,49.65,34.39,34.39,0,0,0,0,81.77a34,34,0,0,0,22.54,32.09,49.86,49.86,0,0,0-.89,9.26,48.56,48.56,0,0,0,88,28.31,25.81,25.81,0,0,0,40.08-29.34A34.39,34.39,0,0,0,172.39,90"/>
+    <path class="el-y" d="M67.77,74l37.73,17.2L143.55,57.8A42.54,42.54,0,0,0,66.74,25.39L60.41,58.23Z"/>
+    <path class="el-t" d="M28.73,113.9a43.34,43.34,0,0,0-.83,8.49,42.65,42.65,0,0,0,77.92,24l6.28-32.73-8.39-16L65.84,80.36Z"/>
+    <path class="el-p" d="M28.49,48.62l25.85,6.1L60,25.33A20.43,20.43,0,0,0,28.49,48.62"/>
+    <path class="el-b" d="M26.25,54.78A28.51,28.51,0,0,0,25,108.49L61.28,75.71,54.62,61.48Z"/>
+    <path class="el-g" d="M112.45,146.37a20.39,20.39,0,0,0,31.45-23.25l-25.83-6Z"/>
+    <path class="el-db" d="M117.7,110.31,146.14,117a28.77,28.77,0,0,0,19.58-27.08,28.46,28.46,0,0,0-18.38-26.59L110.15,95.88Z"/>
+  </svg>
+</div>
+
+<!-- CDN: html2canvas (screenshot) + PptxGenJS (PPTX export) -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/pptxgenjs@3.12.0/dist/pptxgen.bundle.js"></script>
+
+<script>
+/* ── Slide navigation ─────────────────────────────────────────────────── */
+const slides   = Array.from(document.querySelectorAll('.slide'));
+const snavBtns = Array.from(document.querySelectorAll('.snav-btn'));
+const prevBtn  = document.getElementById('prevBtn');
+const nextBtn  = document.getElementById('nextBtn');
+const counter  = document.getElementById('slideCounter');
+let cur = 0;
+
+function goTo(n) {
+  if (n < 0 || n >= slides.length || n === cur) return;
+  const forward = n > cur;
+  const prev = cur;
+  cur = n;
+
+  // Exit outgoing slide in the correct direction
+  slides[prev].classList.remove('active');
+  slides[prev].classList.add(forward ? 'exit-left' : 'exit-right');
+  setTimeout(() => slides[prev].classList.remove('exit-left', 'exit-right'), 500);
+
+  // Snap incoming slide to off-screen position (no transition), then animate in
+  slides[cur].classList.add(forward ? 'from-right' : 'from-left');
+  requestAnimationFrame(() => {
+    requestAnimationFrame(() => {
+      slides[cur].classList.remove('from-right', 'from-left');
+      slides[cur].classList.add('active');
+    });
+  });
+
+  snavBtns.forEach((b, i) => b.classList.toggle('active', i === cur));
+  prevBtn.disabled = cur === 0;
+  nextBtn.disabled = cur === slides.length - 1;
+  counter.textContent = `${cur + 1} / ${slides.length}`;
+}
+
+prevBtn.addEventListener('click', () => goTo(cur - 1));
+nextBtn.addEventListener('click', () => goTo(cur + 1));
+snavBtns.forEach((b, i) => b.addEventListener('click', () => goTo(i)));
+
+document.addEventListener('keydown', e => {
+  if (e.metaKey || e.ctrlKey || e.altKey || e.defaultPrevented) return;
+  if (e.key === 'ArrowRight' || e.key === 'ArrowDown'  || e.key === 'PageDown') { e.preventDefault(); goTo(cur + 1); }
+  if (e.key === 'ArrowLeft'  || e.key === 'ArrowUp'    || e.key === 'PageUp'  ) { e.preventDefault(); goTo(cur - 1); }
+  if (e.key === 'f' || e.key === 'F') { e.preventDefault(); toggleFullscreen(); }
+  if (e.key === 'Escape' && document.fullscreenElement) { document.exitFullscreen(); }
+});
+
+/* ── Fullscreen ───────────────────────────────────────────────────────── */
+const fsBtn = document.getElementById('fsBtn');
+
+function toggleFullscreen() {
+  if (!document.fullscreenElement) {
+    document.documentElement.requestFullscreen().catch(() => {});
+  } else {
+    document.exitFullscreen();
+  }
+}
+
+fsBtn.addEventListener('click', toggleFullscreen);
+
+document.addEventListener('fullscreenchange', () => {
+  const isFs = !!document.fullscreenElement;
+  fsBtn.textContent = isFs ? '⛶' : '⛶';
+  fsBtn.title = isFs ? 'Exit fullscreen (F or Esc)' : 'Toggle fullscreen (F)';
+  fsBtn.style.color = isFs ? 'var(--el-teal)' : '';
+});
+
+/* ── Print / PDF ──────────────────────────────────────────────────────── */
+// Chrome/Edge "Save as PDF" preserves <a href> links automatically.
+function beforePrint() {
+  slides.forEach(s => { s.classList.add('active'); s.classList.remove('exit-left','exit-right','from-right','from-left'); });
+}
+function afterPrint() {
+  slides.forEach((s, i) => {
+    s.classList.toggle('active', i === cur);
+    if (i !== cur) s.classList.remove('exit-left','exit-right','from-right','from-left');
+  });
+}
+window.addEventListener('beforeprint', beforePrint);
+window.addEventListener('afterprint',  afterPrint);
+
+document.getElementById('pdfBtn').addEventListener('click', () => {
+  beforePrint();
+  setTimeout(() => { window.print(); }, 80);
+});
+
+/* ── Light / Dark theme toggle ────────────────────────────────────────── */
+const themeBtn = document.getElementById('themeBtn');
+const THEME_KEY = 'ect-theme';
+
+function applyTheme(theme) {
+  document.body.classList.toggle('light', theme === 'light');
+  document.body.classList.toggle('dark',  theme === 'dark');
+  themeBtn.title = theme === 'light' ? 'Switch to dark theme' : 'Switch to light theme';
+  localStorage.setItem(THEME_KEY, theme);
+}
+
+themeBtn.addEventListener('click', () => {
+  applyTheme(document.body.classList.contains('light') ? 'dark' : 'light');
+});
+
+// Apply saved preference (default: dark)
+applyTheme(localStorage.getItem(THEME_KEY) || 'dark');
+
+/* ── PPTX Export ──────────────────────────────────────────────────────── */
+// Each slide is screenshotted via html2canvas (respects the active theme),
+// embedded as a full-bleed image, then invisible hyperlink text-boxes are
+// overlaid so links stay clickable in PowerPoint.
+//
+// Blank-slide fix: rather than using goTo() (which triggers 450 ms CSS
+// transitions), we inject a temporary <style> that kills all transitions,
+// flip the `active` class directly, then wait for two animation frames +
+// 200 ms before capturing — guaranteeing a fully-painted frame every time.
+
+document.getElementById('pptxBtn').addEventListener('click', exportPptx);
+
+async function exportPptx() {
+  const btn = document.getElementById('pptxBtn');
+  btn.disabled = true;
+  btn.textContent = '⏳ …';
+
+  const isLight = document.body.classList.contains('light');
+  const bgHex   = isLight ? '#F0F4FA' : '#07080F';
+  const bgPptx  = isLight ? 'F0F4FA'  : '07080F';
+  const savedCur = cur;
+
+  // ── 1. Kill CSS transitions for the duration of the export ────────────
+  const noAnim = document.createElement('style');
+  noAnim.id = 'pptx-no-anim';
+  noAnim.textContent = '.slide{transition:none!important;animation:none!important}';
+  document.head.appendChild(noAnim);
+
+  // ── 2. Build the PPTX document ────────────────────────────────────────
+  const pptx = new PptxGenJS();
+  pptx.layout  = 'LAYOUT_WIDE';   // 13.33" × 7.5"  (16:9 widescreen)
+  pptx.title   = 'Elastic Cluster Triage — Day 2 Workflow';
+  pptx.subject = 'Day 2 Workflow';
+  pptx.author  = 'Elastic';
+
+  // ── Fixed 16:9 export canvas — guarantees slides fill PPTX exactly ──────
+  // PPTX LAYOUT_WIDE is 13.33" × 7.5" (16:9). We force the deck to render
+  // at exactly 1920×1080 px before capturing so the captured image always
+  // has the same 16:9 aspect ratio, regardless of the user's screen size.
+  const EXPORT_W = 1920;
+  const EXPORT_H = 1080;
+
+  const deck = document.getElementById('deck');
+
+  // Freeze deck at 1920×1080 for the duration of export
+  const deckOldStyle = deck.getAttribute('style') || '';
+  deck.style.cssText = [
+    deckOldStyle,
+    `width:${EXPORT_W}px !important`,
+    `height:${EXPORT_H}px !important`,
+    `min-width:${EXPORT_W}px`,
+    `min-height:${EXPORT_H}px`,
+    `max-width:${EXPORT_W}px`,
+    `max-height:${EXPORT_H}px`,
+  ].join(';');
+
+  for (let i = 0; i < slides.length; i++) {
+    btn.textContent = `⏳ ${i + 1} / ${slides.length}`;
+
+    // Show only slide i — instant, no animation
+    slides.forEach((s, j) => {
+      s.classList.toggle('active', j === i);
+      s.classList.remove('exit-left','exit-right','from-right','from-left');
+    });
+
+    // Two rAF passes guarantee the browser has finished layout + paint
+    await new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)));
+    await new Promise(r => setTimeout(r, 250));
+
+    // ── 3. Screenshot ────────────────────────────────────────────────────
+    // The deck is now locked to EXPORT_W × EXPORT_H. Capture it directly.
+    // Fixed-position chrome (nav bar, slide nav, logo) is hidden so it
+    // does not bleed into the captured image.
+
+    const chromeEls = ['.nav', '.slide-nav', '.elastic-logo']
+      .map(s => document.querySelector(s)).filter(Boolean);
+    chromeEls.forEach(el => {
+      el.dataset.pptxVis = el.style.visibility;
+      el.style.visibility = 'hidden';
+    });
+
+    // One extra rAF after hiding chrome
+    await new Promise(r => requestAnimationFrame(r));
+
+    let imgData = null;
+    try {
+      const canvas = await html2canvas(deck, {
+        scale: 1,           // already 1920×1080 — no need to double
+        useCORS: true,
+        allowTaint: true,
+        logging: false,
+        backgroundColor: bgHex,
+        width:        EXPORT_W,
+        height:       EXPORT_H,
+        windowWidth:  EXPORT_W,
+        windowHeight: EXPORT_H,
+        x: 0,
+        y: 0,
+        scrollX: 0,
+        scrollY: 0,
+      });
+      imgData = canvas.toDataURL('image/jpeg', 0.94);
+    } catch (err) {
+      console.warn(`Slide ${i + 1} capture failed:`, err);
+    } finally {
+      // Always restore chrome visibility
+      chromeEls.forEach(el => {
+        el.style.visibility = el.dataset.pptxVis || '';
+        delete el.dataset.pptxVis;
+      });
+    }
+
+    // ── 4. Add PPTX slide ────────────────────────────────────────────────
+    const pSlide = pptx.addSlide();
+    pSlide.background = { color: bgPptx };
+
+    if (imgData) {
+      // Fill exactly 13.33" × 7.5" (LAYOUT_WIDE). The captured canvas is
+      // dW × dH at 2× scale; aspect ratio matches 16:9 so no distortion.
+      pSlide.addImage({ data: imgData, x: 0, y: 0, w: 13.33, h: 7.5 });
+    } else {
+      const title = slides[i].querySelector('h1,h2')?.textContent?.trim() || `Slide ${i + 1}`;
+      pSlide.addText(title, {
+        x: 0.5, y: 2.5, w: 12, h: 1.2,
+        fontSize: 28, bold: true, align: 'center',
+        color: isLight ? '006B66' : '00BFB3',
+      });
+    }
+
+    // ── 5. Overlay invisible hyperlinks ──────────────────────────────────
+    // Convert each link's position to PPTX inches.
+    // getBoundingClientRect() returns coords in the deck's 1920×1080 space
+    // (since we resized the deck), so we use EXPORT_W/H as the reference.
+    slides[i].querySelectorAll('a[href^="http"]').forEach(a => {
+      const r = a.getBoundingClientRect();
+      if (r.width < 4 || r.height < 4) return;
+
+      const x = (r.left  / EXPORT_W) * 13.33;
+      const y = (r.top   / EXPORT_H) * 7.5;
+      const w = Math.max((r.width  / EXPORT_W) * 13.33, 0.2);
+      const h = Math.max((r.height / EXPORT_H) * 7.5,   0.12);
+
+      try {
+        pSlide.addText('', {
+          x, y, w, h,
+          hyperlink: { url: a.href, tooltip: a.textContent.trim().slice(0, 100) },
+          fill: { type: 'solid', color: 'FFFFFF', alpha: 100 },
+          line: { type: 'none' },
+          fontSize: 1,
+        });
+      } catch (_) {}
+    });
+  }
+
+  // ── 6. Restore state ──────────────────────────────────────────────────
+  document.head.removeChild(noAnim);
+
+  // Restore deck to its original responsive dimensions
+  deck.setAttribute('style', deckOldStyle);
+
+  // Re-show the slide the user was on without triggering goTo() side effects
+  slides.forEach((s, i) => {
+    s.classList.toggle('active', i === savedCur);
+    s.classList.remove('exit-left','exit-right','from-right','from-left');
+  });
+  snavBtns.forEach((b, i) => b.classList.toggle('active', i === savedCur));
+  prevBtn.disabled = savedCur === 0;
+  nextBtn.disabled = savedCur === slides.length - 1;
+  counter.textContent = `${savedCur + 1} / ${slides.length}`;
+  cur = savedCur;
+
+  // ── 7. Write file ─────────────────────────────────────────────────────
+  const theme = isLight ? 'light' : 'dark';
+  await pptx.writeFile({ fileName: `elastic-cluster-triage-${theme}.pptx` });
+
+  btn.disabled = false;
+  btn.textContent = '⬇ PPTX';
+}
+
+/* ── Init ─────────────────────────────────────────────────────────────── */
+slides[0].classList.add('active');
+snavBtns[0].classList.add('active');
+counter.textContent = `1 / ${slides.length}`;
+</script>
+</body>
+</html>

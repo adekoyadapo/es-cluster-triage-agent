@@ -1,0 +1,647 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>ES Cluster Triage Agent — Installation Guide</title>
+<style>
+/* ── Dark theme (default) ── */
+:root{
+  --el-teal:#00BFB3;--el-blue:#0077CC;--el-yellow:#FEC514;
+  --el-pink:#F04E98;--el-red:#E7664C;--el-green:#54B399;
+  --el-bg:#07080F;--el-bg2:#0D1117;--el-surface:#111827;
+  --el-border:#1C2535;--el-text:#D3DAE6;--el-muted:#69707D;
+  --el-code-bg:#0A0D14;--el-nav-bg:#07080Fcc;
+}
+/* ── Light theme ── */
+[data-theme="light"]{
+  --el-bg:#FFFFFF;--el-bg2:#F5F7FA;--el-surface:#F0F4F8;
+  --el-border:#D3DAE6;--el-text:#1C2535;--el-muted:#69707D;
+  --el-code-bg:#F0F4F8;--el-nav-bg:#FFFFFFcc;
+}
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+html{scroll-behavior:smooth}
+body{font-family:"Segoe UI","Inter","Helvetica Neue",sans-serif;
+  background:var(--el-bg);color:var(--el-text);line-height:1.6;
+  padding:0 0 80px;transition:background .25s,color .25s}
+
+/* ── Nav bar ── */
+nav{position:sticky;top:0;z-index:100;background:var(--el-nav-bg);
+  backdrop-filter:blur(12px);border-bottom:1px solid var(--el-border);
+  display:flex;align-items:center;gap:24px;padding:0 48px;height:56px}
+.nav-logo{display:flex;align-items:center;gap:8px;font-weight:700;
+  font-size:.95rem;color:var(--el-teal);letter-spacing:.04em}
+.nav-links{display:flex;gap:20px;margin-left:auto}
+.nav-links a{color:var(--el-muted);text-decoration:none;font-size:.85rem;
+  transition:color .2s;padding:4px 0}
+.nav-links a:hover{color:var(--el-text)}
+
+/* ── Theme toggle (nav icon button) ── */
+#theme-toggle{background:transparent;border:1px solid var(--el-border);
+  border-radius:6px;padding:5px 8px;cursor:pointer;font-size:.92rem;
+  color:var(--el-muted);line-height:1;transition:background .15s,border-color .15s,color .15s;
+  margin-left:8px}
+#theme-toggle:hover{background:var(--el-surface);border-color:var(--el-teal);color:var(--el-teal)}
+[data-theme="dark"]  #theme-toggle::before{content:'☀️'}
+[data-theme="light"] #theme-toggle::before{content:'🌙'}
+
+/* ── Hero ── */
+.hero{padding:80px 48px 64px;max-width:900px;margin:0 auto;text-align:center}
+.hero-badge{display:inline-flex;align-items:center;gap:8px;
+  background:#00BFB318;border:1px solid #00BFB340;
+  border-radius:99px;padding:4px 14px;font-size:.78rem;
+  color:var(--el-teal);font-weight:600;letter-spacing:.06em;margin-bottom:20px}
+.hero h1{font-size:2.8rem;font-weight:800;line-height:1.15;margin-bottom:16px}
+.hero h1 span{color:var(--el-teal)}
+.hero .sub{color:var(--el-muted);font-size:1.05rem;max-width:620px;margin:0 auto 32px}
+.btn{display:inline-flex;align-items:center;gap:8px;
+  background:var(--el-teal);color:#07080F;font-weight:700;
+  padding:10px 22px;border-radius:8px;text-decoration:none;font-size:.9rem;
+  transition:opacity .2s}
+.btn:hover{opacity:.85}
+.btn-outline{background:transparent;border:1px solid var(--el-border);color:var(--el-text)}
+.btn-outline:hover{border-color:var(--el-teal);color:var(--el-teal)}
+.hero-btns{display:flex;gap:12px;justify-content:center}
+
+/* ── Sections ── */
+section{max-width:900px;margin:0 auto;padding:64px 48px 0}
+h2{font-size:1.6rem;font-weight:700;margin-bottom:8px}
+h2 span{color:var(--el-teal)}
+.section-sub{color:var(--el-muted);margin-bottom:32px;font-size:.95rem}
+h3{font-size:1.1rem;font-weight:700;margin:24px 0 10px}
+
+/* ── Cards ── */
+.card{background:var(--el-surface);border:1px solid var(--el-border);
+  border-radius:12px;padding:24px;margin-bottom:20px}
+.card-grid{display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:20px}
+.card-sm{background:var(--el-surface);border:1px solid var(--el-border);
+  border-radius:10px;padding:18px}
+.card-icon{font-size:1.6rem;margin-bottom:10px}
+.card-title{font-weight:700;margin-bottom:6px;font-size:.95rem}
+.card-desc{color:var(--el-muted);font-size:.85rem;line-height:1.5}
+
+/* ── Steps ── */
+.steps{counter-reset:step}
+.step{display:flex;gap:20px;margin-bottom:28px}
+.step-num{counter-increment:step;flex-shrink:0;width:36px;height:36px;
+  border-radius:50%;background:#00BFB318;border:2px solid var(--el-teal);
+  display:flex;align-items:center;justify-content:center;
+  font-weight:800;font-size:.9rem;color:var(--el-teal)}
+.step-num::before{content:counter(step)}
+.step-body{padding-top:6px}
+.step-title{font-weight:700;margin-bottom:6px}
+.step-desc{color:var(--el-muted);font-size:.9rem;line-height:1.6}
+
+/* ── Doc links ── */
+.doc-link{display:inline-flex;align-items:center;gap:4px;
+  color:var(--el-teal);font-size:.78rem;text-decoration:none;
+  border:1px solid #00BFB330;border-radius:4px;padding:1px 7px;
+  transition:background .15s,border-color .15s}
+.doc-link:hover{background:#00BFB312;border-color:var(--el-teal)}
+.doc-link::before{content:"📄 ";font-size:.72rem}
+.doc-links{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px}
+
+/* ── Code blocks ── */
+pre{background:var(--el-code-bg);border:1px solid var(--el-border);border-radius:10px;
+  padding:20px;overflow-x:auto;margin:12px 0;transition:background .25s}
+code{font-family:"Fira Code","Cascadia Code",monospace;font-size:.83rem;
+  color:var(--el-teal)}
+.code-label{font-size:.72rem;color:var(--el-muted);text-transform:uppercase;
+  letter-spacing:.07em;margin-bottom:6px}
+
+/* ── Tables ── */
+table{width:100%;border-collapse:collapse;margin:16px 0}
+th{text-align:left;font-size:.78rem;text-transform:uppercase;
+  letter-spacing:.07em;color:var(--el-muted);padding:8px 12px;
+  border-bottom:1px solid var(--el-border)}
+td{padding:10px 12px;border-bottom:1px solid var(--el-border);font-size:.88rem;opacity:.9}
+tr:last-child td{border-bottom:none}
+td code{background:var(--el-code-bg);padding:2px 6px;border-radius:4px;font-size:.8rem}
+
+/* ── Chips / badges ── */
+.chip{display:inline-block;padding:2px 8px;border-radius:4px;font-size:.75rem;
+  font-weight:700;letter-spacing:.04em}
+.chip-teal{background:#00BFB318;color:var(--el-teal);border:1px solid #00BFB340}
+.chip-yellow{background:#FEC51418;color:var(--el-yellow);border:1px solid #FEC51440}
+.chip-red{background:#E7664C18;color:var(--el-red);border:1px solid #E7664C40}
+.chip-green{background:#54B39918;color:var(--el-green);border:1px solid #54B39940}
+
+/* ── Notice / callout ── */
+.callout{background:#FEC51410;border:1px solid #FEC51440;border-radius:10px;
+  padding:14px 18px;font-size:.88rem;margin:16px 0}
+.callout-info{background:#0077CC10;border-color:#0077CC40}
+.callout-warn{background:#E7664C10;border-color:#E7664C40}
+
+/* ── Tool group colors ── */
+.grp{display:flex;gap:8px;align-items:flex-start;margin-bottom:12px}
+.grp-bar{width:4px;border-radius:99px;flex-shrink:0;min-height:32px;margin-top:4px}
+.grp-content{}
+.grp-name{font-weight:700;font-size:.9rem;margin-bottom:2px}
+.grp-tools{font-size:.8rem;color:var(--el-muted)}
+
+/* ── Footer ── */
+footer{max-width:900px;margin:80px auto 0;padding:0 48px;
+  border-top:1px solid var(--el-border);padding-top:32px;
+  display:flex;justify-content:space-between;align-items:center}
+footer p{color:var(--el-muted);font-size:.82rem}
+</style>
+</head>
+<body>
+
+<nav>
+  <span class="nav-logo">
+    <img src="elasticsearch-logo.svg" width="22" height="22" alt="Elastic" style="flex-shrink:0;display:block"/>
+    ES Cluster Triage Agent
+  </span>
+  <div class="nav-links">
+    <a href="#prerequisites">Prerequisites</a>
+    <a href="#install">Install</a>
+    <a href="#tools">Tools</a>
+    <a href="#workflow">Workflow</a>
+    <a href="#mcp">MCP App</a>
+  </div>
+  <button id="theme-toggle" aria-label="Toggle light/dark theme" title="Toggle theme"></button>
+</nav>
+
+<!-- ── Hero ────────────────────────────────────────────────────────────────── -->
+<div class="hero">
+  <div class="hero-badge">⚡ ELASTIC AI · STACK MONITORING</div>
+  <h1>Elasticsearch Cluster<br/><span>Triage Agent</span></h1>
+  <p class="sub">
+    Deploy AI-powered triage into any Kibana space in minutes.
+    19 ES|QL tools · 5 skill groups · alert and scheduled workflows.
+  </p>
+  <div class="hero-btns">
+    <a href="#install" class="btn">Get Started →</a>
+    <a href="#tools" class="btn btn-outline">Explore Tools</a>
+  </div>
+</div>
+
+<!-- ── What it does ─────────────────────────────────────────────────────────── -->
+<section>
+  <h2>What it <span>does</span></h2>
+  <p class="section-sub">
+    One agent. Five skill groups. Everything you need for Elasticsearch day-2 operations.
+  </p>
+  <div class="card-grid">
+    <div class="card-sm">
+      <div class="card-icon">🩺</div>
+      <div class="card-title">Cluster Health Triage</div>
+      <div class="card-desc">Red/yellow periods, node loss, heap and CPU pressure, JVM GC analysis</div>
+    </div>
+    <div class="card-sm">
+      <div class="card-icon">📊</div>
+      <div class="card-title">Resource Pressure</div>
+      <div class="card-desc">Disk watermarks, shard pressure, thread-pool rejections by pool type</div>
+    </div>
+    <div class="card-sm">
+      <div class="card-icon">🔥</div>
+      <div class="card-title">Index Pressure</div>
+      <div class="card-desc">Hot shards, unassigned shard causes, indexing failures, slow query log</div>
+    </div>
+    <div class="card-sm">
+      <div class="card-icon">📈</div>
+      <div class="card-title">Index Lifecycle</div>
+      <div class="card-desc">Storage growth, mapping explosions, ILM stalls, hotspot workloads</div>
+    </div>
+    <div class="card-sm">
+      <div class="card-icon">🔍</div>
+      <div class="card-title">Logs & Security</div>
+      <div class="card-desc">Server error patterns, authentication failures, audit trail analysis</div>
+    </div>
+    <div class="card-sm">
+      <div class="card-icon">🤖</div>
+      <div class="card-title">Automated Workflow</div>
+      <div class="card-desc">Alert or scheduled trigger → ES|QL query → AI triage report, reviewed in workflow execution history.</div>
+    </div>
+  </div>
+</section>
+
+<!-- ── Prerequisites ────────────────────────────────────────────────────────── -->
+<section id="prerequisites">
+  <h2><span>Prerequisites</span></h2>
+  <p class="section-sub">What you need before running the installer.</p>
+
+  <table>
+    <thead><tr><th>Requirement</th><th>Minimum</th><th>Notes</th><th>Docs</th></tr></thead>
+    <tbody>
+      <tr>
+        <td>Python</td><td>3.8+</td>
+        <td>No external packages needed — stdlib only</td>
+        <td></td>
+      </tr>
+      <tr>
+        <td>Kibana</td><td>8.12+</td>
+        <td>Agent Builder feature must be available</td>
+        <td><a class="doc-link" href="https://www.elastic.co/docs/explore-analyze/ai-features/elastic-agent-builder" target="_blank" rel="noopener">Agent Builder</a></td>
+      </tr>
+      <tr>
+        <td>Stack Monitoring</td><td>Any</td>
+        <td>Sending data to <code>.monitoring-es-*</code></td>
+        <td><a class="doc-link" href="https://www.elastic.co/docs/deploy-manage/monitor/stack-monitoring" target="_blank" rel="noopener">Stack Monitoring</a></td>
+      </tr>
+      <tr>
+        <td>Auth credentials</td><td>—</td>
+        <td>API key or username/password with admin role</td>
+        <td><a class="doc-link" href="https://www.elastic.co/docs/deploy-manage/api-keys/elasticsearch-api-keys" target="_blank" rel="noopener">API Keys</a></td>
+      </tr>
+      <tr>
+        <td>Node.js 22+</td><td>Optional</td>
+        <td>Only for building the MCP desktop app</td>
+        <td></td>
+      </tr>
+    </tbody>
+  </table>
+
+  <h3>API Key Setup</h3>
+  <p style="color:var(--el-muted);margin-bottom:8px;font-size:.9rem">
+    Paste these in Kibana → Management → Dev Tools. The installer will show you these commands interactively.
+  </p>
+  <div class="doc-links" style="margin-bottom:12px">
+    <a class="doc-link" href="https://www.elastic.co/docs/deploy-manage/api-keys/elasticsearch-api-keys" target="_blank" rel="noopener">Elasticsearch API Keys</a>
+    <a class="doc-link" href="https://www.elastic.co/docs/explore-analyze/ai-features/elastic-agent-builder" target="_blank" rel="noopener">Agent Builder permissions</a>
+  </div>
+
+  <p class="code-label">Installer API key (Kibana admin permissions)</p>
+  <pre><code>POST /_security/api_key
+{
+  "name": "es-cluster-triage-installer",
+  "role_descriptors": {
+    "kibana_deployer": {
+      "cluster": ["monitor"],
+      "indices": [{"names":["*"],"privileges":["read","view_index_metadata"]}],
+      "applications": [{
+        "application": "kibana-.kibana",
+        "privileges": ["all"],
+        "resources": ["*"]
+      }]
+    }
+  }
+}</code></pre>
+
+  <p class="code-label" style="margin-top:16px">ES|QL API key (monitoring read access)</p>
+  <pre><code>POST /_security/api_key
+{
+  "name": "es-cluster-triage-esql",
+  "role_descriptors": {
+    "monitoring_reader": {
+      "indices": [{
+        // Replace with your actual monitoring and log datastream patterns.
+        // The installer will prompt you for these during setup.
+        // Example defaults shown below:
+        "names": [".monitoring-es-*", "logs-*"],
+        "privileges": ["read", "view_index_metadata"]
+      }]
+    }
+  }
+}</code></pre>
+
+  <div class="callout">
+    💡 <strong>Tip:</strong> You can also use <code>elastic</code> username with its password — the installer accepts both API keys and basic auth.
+  </div>
+</section>
+
+<!-- ── Install ───────────────────────────────────────────────────────────────── -->
+<section id="install">
+  <h2>Installation <span>Walkthrough</span></h2>
+  <p class="section-sub">Run <code>python3 install/install.py</code> and follow the prompts.</p>
+
+  <div class="steps">
+    <div class="step">
+      <div class="step-num"></div>
+      <div class="step-body">
+        <div class="step-title">Prerequisite Check</div>
+        <div class="step-desc">
+          Verifies Python 3.8+, confirms the bundle files are in place (19 tools, 5 skills, agent, workflow template).
+        </div>
+        <div class="doc-links">
+          <a class="doc-link" href="https://www.elastic.co/docs/explore-analyze/ai-features/elastic-agent-builder" target="_blank" rel="noopener">Agent Builder overview</a>
+        </div>
+      </div>
+    </div>
+    <div class="step">
+      <div class="step-num"></div>
+      <div class="step-body">
+        <div class="step-title">Connection Details</div>
+        <div class="step-desc">
+          Prompts for Kibana URL, Elasticsearch URL, and authentication (API key or username/password).
+          <strong>Credentials are never echoed to the terminal.</strong>
+        </div>
+        <div class="doc-links">
+          <a class="doc-link" href="https://www.elastic.co/docs/deploy-manage/api-keys/elasticsearch-api-keys" target="_blank" rel="noopener">Creating API keys</a>
+        </div>
+      </div>
+    </div>
+    <div class="step">
+      <div class="step-num"></div>
+      <div class="step-body">
+        <div class="step-title">Auth Validation</div>
+        <div class="step-desc">
+          Calls <code>/api/status</code> on Kibana and <code>/_cluster/health</code> on Elasticsearch.
+          If either fails, the installer stops with a clear error message — no partial deployments.
+        </div>
+        <div class="doc-links">
+          <a class="doc-link" href="https://www.elastic.co/docs/deploy-manage/api-keys/elasticsearch-api-keys" target="_blank" rel="noopener">API key privileges</a>
+        </div>
+      </div>
+    </div>
+    <div class="step">
+      <div class="step-num"></div>
+      <div class="step-body">
+        <div class="step-title">Kibana Space</div>
+        <div class="step-desc">
+          Enter the Kibana space to deploy into (e.g. <code>es-cluster-triage</code>).
+          Lists available spaces. Creates the space if it doesn't exist.
+        </div>
+        <div class="doc-links">
+          <a class="doc-link" href="https://www.elastic.co/docs/deploy-manage/manage-spaces" target="_blank" rel="noopener">Kibana Spaces</a>
+        </div>
+      </div>
+    </div>
+    <div class="step">
+      <div class="step-num"></div>
+      <div class="step-body">
+        <div class="step-title">Datastream Configuration</div>
+        <div class="step-desc">
+          Enter your monitoring datastream pattern (default: <code>.monitoring-es-*</code>).
+          The installer checks doc count, runs a test ES|QL query, and creates a named alias
+          <code>es-triage-monitoring</code> → your pattern.
+        </div>
+        <div class="doc-links">
+          <a class="doc-link" href="https://www.elastic.co/docs/deploy-manage/monitor/stack-monitoring" target="_blank" rel="noopener">Stack Monitoring setup</a>
+          <a class="doc-link" href="https://www.elastic.co/docs/reference/query-languages/esql" target="_blank" rel="noopener">ES|QL reference</a>
+        </div>
+      </div>
+    </div>
+    <div class="step">
+      <div class="step-num"></div>
+      <div class="step-body">
+        <div class="step-title">Deployment</div>
+        <div class="step-desc">
+          Deploys in order: tools → skills → agent → workflow. Optionally adds a Slack connector post-install.
+          Shows a live progress bar. Saves an install manifest to <code>install/.installed.json</code>.
+        </div>
+        <div class="doc-links">
+          <a class="doc-link" href="https://www.elastic.co/docs/explore-analyze/ai-features/elastic-agent-builder" target="_blank" rel="noopener">Agent Builder</a>
+          <a class="doc-link" href="https://www.elastic.co/docs/explore-analyze/workflows" target="_blank" rel="noopener">Kibana Workflows</a>
+        </div>
+      </div>
+    </div>
+    <div class="step">
+      <div class="step-num"></div>
+      <div class="step-body">
+        <div class="step-title">Verification</div>
+        <div class="step-desc">
+          Confirms each component is reachable in Kibana. Reports missing items with specific guidance.
+        </div>
+        <div class="doc-links">
+          <a class="doc-link" href="https://www.elastic.co/docs/explore-analyze/ai-features/elastic-agent-builder" target="_blank" rel="noopener">Agent Builder API</a>
+        </div>
+      </div>
+    </div>
+    <div class="step">
+      <div class="step-num"></div>
+      <div class="step-body">
+        <div class="step-title">Summary</div>
+        <div class="step-desc">
+          Shows a clean summary with the Kibana URL, what was deployed, and next steps.
+          Optionally builds the MCP desktop app.
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="card">
+    <h3 style="margin-top:0">Quick Reference Commands</h3>
+    <p class="code-label">Install</p>
+    <pre><code>python3 install/install.py</code></pre>
+    <p class="code-label" style="margin-top:12px">Health check an existing deployment</p>
+    <pre><code>python3 install/verify.py</code></pre>
+    <p class="code-label" style="margin-top:12px">Remove everything the installer created</p>
+    <pre><code>python3 install/uninstall.py</code></pre>
+  </div>
+
+  <div class="callout callout-warn">
+    ⚠️ <strong>Re-running install:</strong> The installer always deletes and recreates components in the target space.
+    Existing custom configurations in the space will be overwritten.
+    Use a dedicated space (e.g. <code>es-cluster-triage</code>) to avoid conflicts.
+  </div>
+</section>
+
+<!-- ── Tools ─────────────────────────────────────────────────────────────────── -->
+<section id="tools">
+  <h2>Tool <span>Reference</span></h2>
+  <p class="section-sub">19 ES|QL tools across 5 skill groups. All query <code>.monitoring-es-*</code> via the alias.</p>
+  <div class="doc-links" style="margin-bottom:24px">
+    <a class="doc-link" href="https://www.elastic.co/docs/reference/query-languages/esql" target="_blank" rel="noopener">ES|QL reference</a>
+    <a class="doc-link" href="https://www.elastic.co/docs/deploy-manage/monitor/stack-monitoring" target="_blank" rel="noopener">Stack Monitoring data</a>
+    <a class="doc-link" href="https://www.elastic.co/docs/troubleshoot/elasticsearch/diagnose-unassigned-shards" target="_blank" rel="noopener">Diagnose unassigned shards</a>
+    <a class="doc-link" href="https://www.elastic.co/docs/reference/elasticsearch/configuration-reference/thread-pool-settings" target="_blank" rel="noopener">Thread pool settings</a>
+    <a class="doc-link" href="https://www.elastic.co/docs/manage-data/lifecycle/index-lifecycle-management" target="_blank" rel="noopener">ILM overview</a>
+  </div>
+
+  <div class="grp">
+    <div class="grp-bar" style="background:#00BFB3"></div>
+    <div class="grp-content">
+      <div class="grp-name">🩺 Cluster Health Triage</div>
+      <div class="grp-tools">cluster_health_summary · red_yellow_periods · node_last_seen · node_pressure_summary · jvm_gc_pressure</div>
+    </div>
+  </div>
+  <div class="grp">
+    <div class="grp-bar" style="background:#FEC514"></div>
+    <div class="grp-content">
+      <div class="grp-name">📊 Resource Pressure Triage</div>
+      <div class="grp-tools">disk_shard_pressure · thread_pool_rejections</div>
+      <div class="doc-links" style="margin-top:6px"><a class="doc-link" href="https://www.elastic.co/docs/reference/elasticsearch/configuration-reference/thread-pool-settings" target="_blank" rel="noopener">Thread pool settings</a></div>
+    </div>
+  </div>
+  <div class="grp">
+    <div class="grp-bar" style="background:#E7664C"></div>
+    <div class="grp-content">
+      <div class="grp-name">🔥 Index Pressure Triage</div>
+      <div class="grp-tools">index_pressure_analysis · unassigned_shard_analysis · indexing_failure_analysis · hot_shards_analysis · slow_index_queries</div>
+      <div class="doc-links" style="margin-top:6px"><a class="doc-link" href="https://www.elastic.co/docs/troubleshoot/elasticsearch/diagnose-unassigned-shards" target="_blank" rel="noopener">Diagnose unassigned shards</a></div>
+    </div>
+  </div>
+  <div class="grp">
+    <div class="grp-bar" style="background:#A78BFA"></div>
+    <div class="grp-content">
+      <div class="grp-name">📈 Index Lifecycle Triage</div>
+      <div class="grp-tools">index_growth_analysis · mapping_explosion_detection · ilm_stuck_indices · indexing_hotspots · search_hotspots</div>
+      <div class="doc-links" style="margin-top:6px"><a class="doc-link" href="https://www.elastic.co/docs/manage-data/lifecycle/index-lifecycle-management" target="_blank" rel="noopener">ILM overview</a></div>
+    </div>
+  </div>
+  <div class="grp">
+    <div class="grp-bar" style="background:#F04E98"></div>
+    <div class="grp-content">
+      <div class="grp-name">🔍 Logs & Security Triage</div>
+      <div class="grp-tools">error_log_summary · audit_security_events</div>
+    </div>
+  </div>
+
+  <h3>Skill Routing Logic</h3>
+  <table>
+    <thead><tr><th>Symptom</th><th>Start with</th><th>Drill down to</th></tr></thead>
+    <tbody>
+      <tr><td>Red/yellow status, node loss, heap spike</td><td>Cluster Health</td><td>Resource Pressure if broad</td></tr>
+      <tr><td>Disk full, shard imbalance, rejections</td><td>Resource Pressure</td><td>Index Pressure if localized</td></tr>
+      <tr><td>Slow index, allocation failing, write errors</td><td>Index Pressure</td><td>Index Lifecycle if growth-related</td></tr>
+      <tr><td>Storage runaway, ILM stall, mapping explosion</td><td>Index Lifecycle</td><td>—</td></tr>
+      <tr><td>Auth errors, access denied, 5xx log spike</td><td>Logs & Security</td><td>Cluster Health if node-related</td></tr>
+    </tbody>
+  </table>
+</section>
+
+<!-- ── Workflow ───────────────────────────────────────────────────────────────── -->
+<section id="workflow">
+  <h2>Automated <span>Workflow</span></h2>
+  <p class="section-sub">The Kibana Workflow runs on alert triggers or a schedule, producing automated AI triage reports.</p>
+  <div class="doc-links" style="margin-bottom:24px">
+    <a class="doc-link" href="https://www.elastic.co/docs/explore-analyze/workflows" target="_blank" rel="noopener">Kibana Workflows</a>
+    <a class="doc-link" href="https://www.elastic.co/docs/explore-analyze/alerting/alerts/create-manage-rules" target="_blank" rel="noopener">Create alert rules</a>
+  </div>
+
+  <div class="card">
+    <div style="display:flex;gap:16px;align-items:flex-start;flex-wrap:wrap">
+      <div style="flex:1;min-width:200px">
+        <div class="chip chip-teal" style="margin-bottom:10px">TRIGGER</div>
+        <div style="font-weight:700;margin-bottom:4px">Kibana Alert</div>
+        <div style="font-size:.85rem;color:var(--el-muted)">Any Kibana rule — Elasticsearch health, ML anomaly, custom threshold</div>
+      </div>
+      <div style="font-size:1.5rem;padding-top:12px">→</div>
+      <div style="flex:1;min-width:200px">
+        <div class="chip chip-yellow" style="margin-bottom:10px">STEP 1</div>
+        <div style="font-weight:700;margin-bottom:4px">ES|QL Metrics</div>
+        <div style="font-size:.85rem;color:var(--el-muted)">Queries cluster metrics from monitoring index — heap, CPU, rejections, node count</div>
+      </div>
+      <div style="font-size:1.5rem;padding-top:12px">→</div>
+      <div style="flex:1;min-width:200px">
+        <div class="chip" style="background:#0077CC18;color:#0077CC;border:1px solid #0077CC40;margin-bottom:10px">STEP 2</div>
+        <div style="font-weight:700;margin-bottom:4px">AI Agent</div>
+        <div style="font-size:.85rem;color:var(--el-muted)">Triage agent interprets evidence, uses tools as needed, returns a Markdown report</div>
+      </div>
+    </div>
+  </div>
+
+  <h3>Alert Report Format</h3>
+  <pre><code>**Summary**        One-sentence overall finding
+**Most likely issue** Root cause hypothesis
+**Evidence**       Key numbers from the tool results
+**Impacted scope** Cluster / node / index name
+**Time window**    Period the evidence covers
+**Next checks**    2-3 recommended follow-up actions
+**Confidence**     High / Medium / Low with reason</code></pre>
+
+  <h3>Connecting to a Kibana Rule</h3>
+  <div class="steps">
+    <div class="step">
+      <div class="step-num"></div>
+      <div class="step-body">
+        <div class="step-title">Create an Elasticsearch health rule</div>
+        <div class="step-desc">Kibana → Observability → Alerts → Rules → Create rule → Elasticsearch cluster health</div>
+        <div class="doc-links"><a class="doc-link" href="https://www.elastic.co/docs/explore-analyze/alerting/alerts/create-manage-rules" target="_blank" rel="noopener">Create and manage rules</a></div>
+      </div>
+    </div>
+    <div class="step">
+      <div class="step-num"></div>
+      <div class="step-body">
+        <div class="step-title">Add a workflow action</div>
+        <div class="step-desc">In the rule's actions, select "Workflows" as the action type and pick <code>ES Cluster Triage Summary</code></div>
+        <div class="doc-links"><a class="doc-link" href="https://www.elastic.co/docs/explore-analyze/workflows" target="_blank" rel="noopener">Kibana Workflows</a></div>
+      </div>
+    </div>
+    <div class="step">
+      <div class="step-num"></div>
+      <div class="step-body">
+        <div class="step-title">Map alert variables</div>
+        <div class="step-desc">Map <code>context.cluster_name</code> and <code>context.reason</code> to the workflow's event variables</div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ── MCP App ───────────────────────────────────────────────────────────────── -->
+<section id="mcp">
+  <h2>Optional: <span>MCP Desktop App</span></h2>
+  <p class="section-sub">Rich visual dashboards inside Claude Desktop — gauges, charts, and interactive drill-downs.</p>
+
+  <div class="card-grid">
+    <div class="card-sm">
+      <div class="card-icon">📡</div>
+      <div class="card-title">Cluster Health View</div>
+      <div class="card-desc">Live heap/CPU gauges, GC pressure charts, node timeline with area charts</div>
+    </div>
+    <div class="card-sm">
+      <div class="card-icon">💾</div>
+      <div class="card-title">Resource Pressure View</div>
+      <div class="card-desc">Disk usage bars, thread-pool rejection histograms, rejection score rankings</div>
+    </div>
+    <div class="card-sm">
+      <div class="card-icon">🔥</div>
+      <div class="card-title">Index Pressure View</div>
+      <div class="card-desc">Hot shard scatter plots, unassigned shard analysis, slow query rankings</div>
+    </div>
+    <div class="card-sm">
+      <div class="card-icon">📈</div>
+      <div class="card-title">Index Lifecycle View</div>
+      <div class="card-desc">Growth trend charts, mapping explosion scores, ILM stuck indices list</div>
+    </div>
+  </div>
+
+  <h3>Build Instructions</h3>
+  <pre><code>cd mcp-app
+npm install
+npm run build
+# → generates elastic-cluster-triage-agent.mcpb</code></pre>
+
+  <div class="callout callout-info">
+    ℹ️ The installer will ask if you want to build the MCP app automatically at the end of the install process. Just answer <code>y</code> when prompted.
+  </div>
+
+  <h3>Installing in Claude Desktop</h3>
+  <div class="steps">
+    <div class="step">
+      <div class="step-num"></div>
+      <div class="step-body">
+        <div class="step-title">Open Claude Desktop settings</div>
+        <div class="step-desc">Claude Desktop → Settings → Extensions</div>
+      </div>
+    </div>
+    <div class="step">
+      <div class="step-num"></div>
+      <div class="step-body">
+        <div class="step-title">Add the extension</div>
+        <div class="step-desc">Click "Add Extension" and select the <code>.mcpb</code> file from the <code>mcp-app/</code> folder</div>
+      </div>
+    </div>
+    <div class="step">
+      <div class="step-num"></div>
+      <div class="step-body">
+        <div class="step-title">Use the triage agent</div>
+        <div class="step-desc">Ask Claude: <em>"What's the current cluster health?"</em> — the MCP app renders live charts alongside the AI response</div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<footer>
+  <p>Elasticsearch Cluster Triage Agent · Built for Elastic Field Engineering</p>
+  <p><a href="index.html" style="color:var(--el-teal);text-decoration:none">← View Slides</a></p>
+</footer>
+
+<script>
+(function(){
+  var btn = document.getElementById('theme-toggle');
+  var html = document.documentElement;
+  var saved = localStorage.getItem('es-triage-theme');
+  if(saved) html.setAttribute('data-theme', saved);
+  btn.addEventListener('click', function(){
+    var next = html.getAttribute('data-theme') === 'dark' ? 'light' : 'dark';
+    html.setAttribute('data-theme', next);
+    localStorage.setItem('es-triage-theme', next);
+  });
+})();
+</script>
+
+</body>
+</html>

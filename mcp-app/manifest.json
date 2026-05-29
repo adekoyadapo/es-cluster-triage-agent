@@ -1,0 +1,87 @@
+{
+  "manifest_version": "0.3",
+  "name": "elastic-cluster-triage-agent",
+  "display_name": "Elastic Cluster Triage",
+  "version": "1.0.0",
+  "description": "19 ES|QL triage tools for diagnosing Elasticsearch cluster issues from Stack Monitoring data.",
+  "long_description": "An MCP server that connects directly to Elasticsearch and exposes 19 ES|QL-based diagnostic tools covering cluster health, node pressure, JVM GC, disk/shard pressure, thread-pool rejections, index pressure, ILM lifecycle stalls, indexing/search hotspots, error logs, and security audit events. Designed for use with the elastic-cluster-triage-agent skill in Claude Code and Claude Desktop.",
+  "author": {
+    "name": "Elastic",
+    "url": "https://www.elastic.co"
+  },
+  "server": {
+    "type": "node",
+    "entry_point": "dist/main.bundle.mjs",
+    "mcp_config": {
+      "command": "node",
+      "args": [
+        "${__dirname}/dist/main.bundle.mjs",
+        "--stdio"
+      ],
+      "env": {
+        "ELASTICSEARCH_URL": "${user_config.elasticsearch_url}",
+        "ELASTICSEARCH_API_KEY": "${user_config.elasticsearch_api_key}",
+        "KIBANA_URL": "${user_config.kibana_url}",
+        "KIBANA_API_KEY": "${user_config.kibana_api_key}"
+      }
+    }
+  },
+  "tools": [
+    { "name": "cluster_health_summary", "description": "Show cluster health status, shard pressure, and node counts from the legacy monitoring stream." },
+    { "name": "red_yellow_periods", "description": "Track cluster-health periods where the monitoring stream reports yellow or red." },
+    { "name": "node_last_seen", "description": "Show the most recent monitoring sample for each node." },
+    { "name": "node_pressure_summary", "description": "Identify nodes with heap, CPU, disk, rejections, merge, or ingest pressure." },
+    { "name": "jvm_gc_pressure", "description": "Detect nodes with heap pressure and elevated GC activity." },
+    { "name": "disk_shard_pressure", "description": "Detect clusters with low disk space, growing shard counts, or unhealthy cluster status." },
+    { "name": "thread_pool_rejections", "description": "Detect write, search, or bulk rejection pressure by node." },
+    { "name": "indexing_failure_analysis", "description": "Spot write and ingest failure proxies that can block indexing progress." },
+    { "name": "index_pressure_analysis", "description": "Identify indices causing cluster pressure through load, latency, shard growth, cache pressure, or storage growth." },
+    { "name": "unassigned_shard_analysis", "description": "Find shard states that are not STARTED and may indicate allocation issues." },
+    { "name": "hot_shards_analysis", "description": "Identify indices with disproportionately large shard footprints or shard imbalance signals." },
+    { "name": "slow_index_queries", "description": "Find indices with the highest average query latency or sustained search load." },
+    { "name": "index_growth_analysis", "description": "Detect indices that are growing rapidly in the legacy monitoring stream." },
+    { "name": "mapping_explosion_detection", "description": "Find indices with fielddata, cache, or segment-growth pressure that can indicate mapping explosion." },
+    { "name": "ilm_stuck_indices", "description": "Find indices that look stalled in growth or throttled when ILM metadata is unavailable." },
+    { "name": "indexing_hotspots", "description": "Find heavy indexing volume, latency, or storage pressure by index." },
+    { "name": "search_hotspots", "description": "Find high search volume or slow searches by index." },
+    { "name": "error_log_summary", "description": "Summarize WARN and ERROR logs by node and message." },
+    { "name": "audit_security_events", "description": "Summarize authentication and authorization failures from audit or security logs." }
+  ],
+  "tools_generated": true,
+  "user_config": {
+    "elasticsearch_url": {
+      "type": "string",
+      "title": "Elasticsearch URL",
+      "description": "Elasticsearch URL (e.g. https://your-cluster.es.cloud.example.com)",
+      "required": true,
+      "sensitive": false
+    },
+    "elasticsearch_api_key": {
+      "type": "string",
+      "title": "Elasticsearch API Key",
+      "description": "API key for Elasticsearch authentication",
+      "required": true,
+      "sensitive": true
+    },
+    "kibana_url": {
+      "type": "string",
+      "title": "Kibana URL (optional — enables Stack Monitoring deeplinks)",
+      "description": "Kibana URL (e.g. https://your-cluster.kb.cloud.example.com). Enables clickable Stack Monitoring links in triage responses.",
+      "required": false,
+      "sensitive": false
+    },
+    "kibana_api_key": {
+      "type": "string",
+      "title": "Kibana API Key (optional)",
+      "description": "API key for Kibana. Leave blank to reuse the Elasticsearch API key — in most Elastic Cloud deployments the same key works for both.",
+      "required": false,
+      "sensitive": true
+    }
+  },
+  "keywords": ["elasticsearch", "elastic", "cluster-triage", "stack-monitoring", "observability", "esql", "mcp"],
+  "license": "Elastic-2.0",
+  "compatibility": {
+    "platforms": ["darwin", "win32", "linux"],
+    "runtimes": { "node": ">=22.0.0" }
+  }
+}

@@ -1,0 +1,32 @@
+{
+  "agent": "agent.json",
+  "note": "Import-ready bundle for es-cluster-triage. Discovery and ES|QL validation are handled by the local Python CLI.",
+  "skill_files": [
+    "skills/elasticsearch-cluster-health-triage.json",
+    "skills/elasticsearch-resource-pressure-triage.json",
+    "skills/elasticsearch-index-pressure-triage.json",
+    "skills/elasticsearch-index-lifecycle-triage.json",
+    "skills/elasticsearch-logs-security-triage.json"
+  ],
+  "tool_files": [
+    "tools/cluster_health_summary.json",
+    "tools/red_yellow_periods.json",
+    "tools/node_last_seen.json",
+    "tools/node_pressure_summary.json",
+    "tools/jvm_gc_pressure.json",
+    "tools/disk_shard_pressure.json",
+    "tools/thread_pool_rejections.json",
+    "tools/indexing_hotspots.json",
+    "tools/search_hotspots.json",
+    "tools/index_pressure_analysis.json",
+    "tools/unassigned_shard_analysis.json",
+    "tools/indexing_failure_analysis.json",
+    "tools/hot_shards_analysis.json",
+    "tools/index_growth_analysis.json",
+    "tools/mapping_explosion_detection.json",
+    "tools/ilm_stuck_indices.json",
+    "tools/slow_index_queries.json",
+    "tools/error_log_summary.json",
+    "tools/audit_security_events.json"
+  ]
+}

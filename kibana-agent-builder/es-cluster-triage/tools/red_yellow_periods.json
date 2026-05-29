@@ -1,0 +1,23 @@
+{
+  "configuration": {
+    "params": {
+      "cluster_name": {
+        "description": "Optional cluster name filter; use an empty string to query all clusters.",
+        "type": "string"
+      },
+      "lookback": {
+        "description": "Lookback window as ES|QL time span text (e.g. 15 minutes, 1 hour, 24 hours).",
+        "type": "string"
+      }
+    },
+    "query": "FROM .monitoring-es-*\n| WHERE @timestamp >= NOW() - TO_TIMEDURATION(?lookback)\n| WHERE metricset.name == \"cluster_stats\"\n| WHERE elasticsearch.cluster.name IS NOT NULL AND elasticsearch.cluster.stats.status IS NOT NULL\n| WHERE elasticsearch.cluster.stats.status != \"green\"\n| WHERE (?cluster_name == \"\" OR elasticsearch.cluster.name == ?cluster_name)\n| STATS samples = COUNT(), last_seen = MAX(@timestamp), node_count = MAX(elasticsearch.cluster.stats.nodes.count), shards_count = MAX(elasticsearch.cluster.stats.indices.shards.count), primaries_count = MAX(elasticsearch.cluster.stats.indices.shards.primaries) BY bucket = DATE_TRUNC(10 minutes, @timestamp), elasticsearch.cluster.name, elasticsearch.cluster.stats.status\n| SORT bucket DESC, samples DESC\n| LIMIT 50"
+  },
+  "description": "Track cluster-health periods where the monitoring stream reports yellow or red.",
+  "id": "es-cluster-triage-red_yellow_periods",
+  "tags": [
+    "es-cluster-triage",
+    "observability",
+    "stack-monitoring"
+  ],
+  "type": "esql"
+}

@@ -1,0 +1,20 @@
+{
+  "name": "Elasticsearch Cluster Triage Agent",
+  "description": "Triages Elasticsearch cluster issues from monitoring metrics, logs, and audit data.",
+  "instructions_file": "agents/elasticsearch_cluster_triage_agent.md",
+  "tools": [
+    "discover_monitoring_sources",
+    "validate_diagnostic_queries",
+    "cluster_health_summary",
+    "node_pressure_summary",
+    "jvm_gc_pressure",
+    "disk_shard_pressure",
+    "thread_pool_rejections",
+    "indexing_hotspots",
+    "search_hotspots",
+    "error_log_summary",
+    "audit_security_events",
+    "incident_timeline"
+  ]
+}
+

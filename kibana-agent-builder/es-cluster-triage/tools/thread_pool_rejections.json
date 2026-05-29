@@ -1,0 +1,27 @@
+{
+  "configuration": {
+    "params": {
+      "cluster_name": {
+        "description": "Optional cluster name filter; use an empty string to query all clusters.",
+        "type": "string"
+      },
+      "lookback": {
+        "description": "Lookback window as ES|QL time span text (e.g. 15 minutes, 1 hour, 24 hours).",
+        "type": "string"
+      },
+      "node_name": {
+        "description": "Optional node name filter; use an empty string to query all nodes.",
+        "type": "string"
+      }
+    },
+    "query": "FROM .monitoring-es-*\n| WHERE @timestamp >= NOW() - TO_TIMEDURATION(?lookback)\n| WHERE metricset.name == \"node_stats\"\n| WHERE elasticsearch.cluster.name IS NOT NULL AND elasticsearch.node.name IS NOT NULL\n| WHERE (?cluster_name == \"\" OR elasticsearch.cluster.name == ?cluster_name)\n| WHERE (?node_name == \"\" OR elasticsearch.node.name == ?node_name)\n| STATS write_rejected = MAX(elasticsearch.node.stats.thread_pool.write.rejected.count), search_rejected = MAX(elasticsearch.node.stats.thread_pool.search.rejected.count), bulk_rejected = MAX(elasticsearch.node.stats.thread_pool.bulk.rejected.count), write_queue = MAX(elasticsearch.node.stats.thread_pool.write.queue.count), search_queue = MAX(elasticsearch.node.stats.thread_pool.search.queue.count), bulk_queue = MAX(elasticsearch.node.stats.thread_pool.bulk.queue.count), system_write_rejected = MAX(elasticsearch.node.stats.thread_pool.system_write.rejected.count), system_read_rejected = MAX(elasticsearch.node.stats.thread_pool.system_read.rejected.count) BY elasticsearch.cluster.name, elasticsearch.node.name\n| EVAL rejection_score = COALESCE(write_rejected, 0) + COALESCE(search_rejected, 0) + COALESCE(bulk_rejected, 0) + COALESCE(system_write_rejected, 0) + COALESCE(system_read_rejected, 0)\n| SORT rejection_score DESC, write_queue DESC, search_queue DESC\n| LIMIT 25"
+  },
+  "description": "Detect write, search, or bulk rejection pressure by node.",
+  "id": "es-cluster-triage-thread_pool_rejections",
+  "tags": [
+    "es-cluster-triage",
+    "observability",
+    "stack-monitoring"
+  ],
+  "type": "esql"
+}

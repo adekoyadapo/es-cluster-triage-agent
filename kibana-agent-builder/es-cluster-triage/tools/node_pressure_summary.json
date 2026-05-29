@@ -1,0 +1,27 @@
+{
+  "configuration": {
+    "params": {
+      "cluster_name": {
+        "description": "Optional cluster name filter; use an empty string to query all clusters.",
+        "type": "string"
+      },
+      "lookback": {
+        "description": "Lookback window as ES|QL time span text (e.g. 15 minutes, 1 hour, 24 hours).",
+        "type": "string"
+      },
+      "node_name": {
+        "description": "Optional node name filter; use an empty string to query all nodes.",
+        "type": "string"
+      }
+    },
+    "query": "FROM .monitoring-es-*\n| WHERE @timestamp >= NOW() - TO_TIMEDURATION(?lookback)\n| WHERE metricset.name == \"node_stats\"\n| WHERE elasticsearch.cluster.name IS NOT NULL AND elasticsearch.node.name IS NOT NULL\n| WHERE (?cluster_name == \"\" OR elasticsearch.cluster.name == ?cluster_name)\n| WHERE (?node_name == \"\" OR elasticsearch.node.name == ?node_name)\n| STATS avg_heap_pct = AVG(elasticsearch.node.stats.jvm.mem.heap.used.pct), max_heap_pct = MAX(elasticsearch.node.stats.jvm.mem.heap.used.pct), avg_cpu_pct = AVG(elasticsearch.node.stats.process.cpu.pct), max_cpu_pct = MAX(elasticsearch.node.stats.process.cpu.pct), min_available_bytes = MIN(elasticsearch.node.stats.fs.total.available_in_bytes), max_total_bytes = MAX(elasticsearch.node.stats.fs.total.total_in_bytes), indexing_pressure_bytes = MAX(elasticsearch.node.stats.indexing_pressure.memory.current.all.bytes), merge_total = MAX(elasticsearch.node.stats.indices.merges.total.count), merge_time_ms = MAX(elasticsearch.node.stats.indices.merges.total_time.ms), write_rejected = MAX(elasticsearch.node.stats.thread_pool.write.rejected.count), search_rejected = MAX(elasticsearch.node.stats.thread_pool.search.rejected.count), bulk_rejected = MAX(elasticsearch.node.stats.thread_pool.bulk.rejected.count), segments_count = MAX(elasticsearch.node.stats.indices.segments.count) BY elasticsearch.cluster.name, elasticsearch.node.name\n| EVAL used_pct = CASE(max_total_bytes > 0, 1.0 - min_available_bytes / max_total_bytes, NULL), pressure_score = COALESCE(indexing_pressure_bytes, 0) + COALESCE(merge_total, 0) * 100 + COALESCE(write_rejected, 0) * 1000 + COALESCE(search_rejected, 0) * 1000 + COALESCE(bulk_rejected, 0) * 1000 + COALESCE(segments_count, 0)\n| SORT pressure_score DESC, max_heap_pct DESC\n| LIMIT 25"
+  },
+  "description": "Identify nodes with heap, CPU, disk, rejections, merge, or ingest pressure.",
+  "id": "es-cluster-triage-node_pressure_summary",
+  "tags": [
+    "es-cluster-triage",
+    "observability",
+    "stack-monitoring"
+  ],
+  "type": "esql"
+}

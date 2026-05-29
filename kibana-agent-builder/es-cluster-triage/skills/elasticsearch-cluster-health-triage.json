@@ -1,0 +1,13 @@
+{
+  "content": "# ES Cluster Health Triage\n\nUse this skill when the issue looks cluster-wide:\n\n- red/yellow status\n- nodes missing or restarting\n- heap or CPU pressure\n- broad instability with no obvious single index\n- cluster-level saturation symptoms\n\n## Workflow\n\n1. Start with `es-cluster-triage-cluster_health_summary` to establish the cluster-wide symptom.\n2. If the cluster is degraded, use `es-cluster-triage-red_yellow_periods` to determine when the state changed.\n3. If node-level evidence is needed, use `es-cluster-triage-node_last_seen` and `es-cluster-triage-node_pressure_summary`.\n4. If heap or GC pressure is the likely cause, use `es-cluster-triage-jvm_gc_pressure`.\n5. Keep the output concise and explain whether the evidence suggests a cluster-wide issue or a narrower cause.\n\n## Output guidance\n\n- Name the affected cluster and node when available.\n- Call out monitoring coverage gaps explicitly.\n- Do not mention raw query text.\n",
+  "description": "Diagnose broad Elasticsearch cluster health, red/yellow periods, node loss, heap pressure, CPU pressure, and general saturation symptoms.",
+  "id": "es-cluster-triage-cluster-health-triage",
+  "name": "ES Cluster Health Triage",
+  "tool_ids": [
+    "es-cluster-triage-cluster_health_summary",
+    "es-cluster-triage-red_yellow_periods",
+    "es-cluster-triage-node_last_seen",
+    "es-cluster-triage-node_pressure_summary",
+    "es-cluster-triage-jvm_gc_pressure"
+  ]
+}

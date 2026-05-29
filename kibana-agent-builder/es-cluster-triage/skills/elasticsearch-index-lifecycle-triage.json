@@ -1,0 +1,13 @@
+{
+  "content": "# ES Index Lifecycle Triage\n\nUse this skill when the issue is about index evolution rather than immediate pressure:\n\n- runaway index growth\n- mapping explosions or field-cardinality growth\n- ILM or rollover stalls\n- indexing hotspots\n- search hotspots\n\n## Workflow\n\n1. Use `es-cluster-triage-index_growth_analysis` when storage growth or document growth is the concern.\n2. Use `es-cluster-triage-mapping_explosion_detection` when field or mapping growth looks dangerous.\n3. Use `es-cluster-triage-ilm_stuck_indices` when rollover or lifecycle progression appears stalled.\n4. Use `es-cluster-triage-indexing_hotspots` and `es-cluster-triage-search_hotspots` to identify workload concentration.\n\n## Output guidance\n\n- Call out the index family and the dominant lifecycle symptom.\n- If the issue is really pressure rather than lifecycle, hand off to the index pressure skill.\n- Keep the summary concise and actionable.\n",
+  "description": "Investigate runaway index growth, mapping explosion, ILM stalls, and workload hotspots across indexing and search.",
+  "id": "es-cluster-triage-index-lifecycle-triage",
+  "name": "ES Index Lifecycle Triage",
+  "tool_ids": [
+    "es-cluster-triage-index_growth_analysis",
+    "es-cluster-triage-mapping_explosion_detection",
+    "es-cluster-triage-ilm_stuck_indices",
+    "es-cluster-triage-indexing_hotspots",
+    "es-cluster-triage-search_hotspots"
+  ]
+}

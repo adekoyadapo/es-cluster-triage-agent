@@ -1,0 +1,29 @@
+{
+  "configuration": {
+    "params": {
+      "cluster_name": {
+        "description": "Optional cluster name filter; use an empty string to query all clusters.",
+        "type": "string"
+      },
+      "index_name": {
+        "description": "Optional index name filter; use an empty string to query all indices.",
+        "type": "string"
+      },
+      "lookback": {
+        "description": "Lookback window as ES|QL time span text (e.g. 15 minutes, 1 hour, 24 hours).",
+        "type": "string"
+      }
+    },
+    "query": "FROM .monitoring-es-*\n| WHERE @timestamp >= NOW() - TO_TIMEDURATION(?lookback)\n| WHERE metricset.name == \"index\"\n| WHERE elasticsearch.cluster.name IS NOT NULL AND elasticsearch.index.name IS NOT NULL\n| WHERE (?cluster_name == \"\" OR elasticsearch.cluster.name == ?cluster_name)\n| WHERE (?index_name == \"\" OR elasticsearch.index.name == ?index_name)\n| STATS docs_total = MAX(elasticsearch.index.total.docs.count), store_size_bytes = MAX(elasticsearch.index.total.store.size_in_bytes), shards_total = MAX(elasticsearch.index.shards.total), primaries_total = MAX(elasticsearch.index.shards.primaries), segments_count = MAX(elasticsearch.index.total.segments.count), indexing_total = MAX(elasticsearch.index.total.indexing.index_total), search_total = MAX(elasticsearch.index.total.search.query_total) BY elasticsearch.cluster.name, elasticsearch.index.name\n| EVAL avg_shard_size_bytes = CASE(shards_total > 0, store_size_bytes / shards_total, store_size_bytes), hot_shard_score = CASE(shards_total > 0, store_size_bytes / shards_total, store_size_bytes) + COALESCE(segments_count, 0) * 1000 + COALESCE(indexing_total, 0) + COALESCE(search_total, 0)\n| SORT hot_shard_score DESC\n| LIMIT 25"
+  },
+  "description": "Identify indices with disproportionately large shard footprints or shard imbalance signals.",
+  "id": "es-cluster-triage-hot_shards_analysis",
+  "tags": [
+    "es-cluster-triage",
+    "indices",
+    "observability",
+    "performance",
+    "stack-monitoring"
+  ],
+  "type": "esql"
+}

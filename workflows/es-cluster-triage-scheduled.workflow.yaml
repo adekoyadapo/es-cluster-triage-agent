@@ -1,0 +1,57 @@
+name: ES Cluster Triage Scheduled
+description: Runs Elasticsearch triage on a schedule and produces an AI summary. Review results in Kibana Workflows execution history.
+enabled: true
+tags: ["observability", "stack-monitoring", "triage", "scheduled"]
+consts:
+  default_metrics_pattern: "__METRICS_PATTERN__"
+triggers:
+  - type: scheduled
+    with:
+      interval: "__SCHEDULE_INTERVAL__"
+steps:
+  - name: metrics_summary
+    type: elasticsearch.request
+    with:
+      method: POST
+      path: /_query
+      body:
+        query: |
+          FROM {{ consts.default_metrics_pattern }}
+          | WHERE @timestamp >= NOW() - 1 hour
+          | WHERE elasticsearch.cluster.name IS NOT NULL
+          | STATS last_seen = MAX(@timestamp),
+                  node_count = MAX(elasticsearch.cluster.stats.nodes.count),
+                  avg_heap = AVG(elasticsearch.node.stats.jvm.mem.heap.used.pct),
+                  max_heap = MAX(elasticsearch.node.stats.jvm.mem.heap.used.pct),
+                  max_cpu = MAX(elasticsearch.node.stats.process.cpu.pct),
+                  write_rejected = MAX(elasticsearch.node.stats.thread_pool.write.rejected.count),
+                  search_rejected = MAX(elasticsearch.node.stats.thread_pool.search.rejected.count),
+                  bulk_rejected = MAX(elasticsearch.node.stats.thread_pool.bulk.rejected.count)
+            BY elasticsearch.cluster.name, elasticsearch.node.name
+          | SORT max_heap DESC
+          | LIMIT 10
+  - name: summarize
+    type: ai.agent
+    agent-id: "__AGENT_ID__"
+    with:
+      message: |
+        This is a scheduled cluster health triage run. Analyse the metrics evidence below and produce a concise status report.
+
+        Focus on any anomalies, degraded nodes, elevated heap/CPU, or rejection spikes compared to normal operation.
+        If the cluster looks healthy, confirm that clearly.
+        If there are concerns, call out the most likely issue, the evidence, and recommended next checks.
+
+        Return a Markdown report with these sections only:
+        Summary
+        Most likely issue (or "Cluster looks healthy")
+        Evidence
+        Impacted cluster/node/index (if any)
+        Time window
+        Recommended next checks
+        Confidence level
+
+        Scheduled run timestamp: {{ now() }}
+        Metrics source: {{ consts.default_metrics_pattern }}
+
+        Metrics evidence:
+        {{ steps.metrics_summary.output | json }}

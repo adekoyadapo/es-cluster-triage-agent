@@ -1,0 +1,29 @@
+{
+  "configuration": {
+    "params": {
+      "cluster_name": {
+        "description": "Optional cluster name filter; use an empty string to query all clusters.",
+        "type": "string"
+      },
+      "index_name": {
+        "description": "Optional index name filter; use an empty string to query all indices.",
+        "type": "string"
+      },
+      "lookback": {
+        "description": "Lookback window as ES|QL time span text (e.g. 15 minutes, 1 hour, 24 hours).",
+        "type": "string"
+      }
+    },
+    "query": "FROM .monitoring-es-*\n| WHERE @timestamp >= NOW() - TO_TIMEDURATION(?lookback)\n| WHERE metricset.name == \"index\"\n| WHERE elasticsearch.cluster.name IS NOT NULL AND elasticsearch.index.name IS NOT NULL\n| WHERE (?cluster_name == \"\" OR elasticsearch.cluster.name == ?cluster_name)\n| WHERE (?index_name == \"\" OR elasticsearch.index.name == ?index_name)\n| STATS indexing_total = MAX(elasticsearch.index.total.indexing.index_total), indexing_time_ms = MAX(elasticsearch.index.total.indexing.index_time_in_millis), search_total = MAX(elasticsearch.index.total.search.query_total), search_time_ms = MAX(elasticsearch.index.total.search.query_time_in_millis), docs_total = MAX(elasticsearch.index.total.docs.count), segments_count = MAX(elasticsearch.index.total.segments.count), store_size_bytes = MAX(elasticsearch.index.total.store.size_in_bytes), shards_total = MAX(elasticsearch.index.shards.total), fielddata_memory_bytes = MAX(elasticsearch.index.total.fielddata.memory_size_in_bytes), query_cache_evictions = MAX(elasticsearch.index.total.query_cache.evictions), request_cache_evictions = MAX(elasticsearch.index.total.request_cache.evictions), request_cache_misses = MAX(elasticsearch.index.total.request_cache.miss_count), bulk_total_ops = MAX(elasticsearch.index.total.bulk.total_operations), bulk_total_time_ms = MAX(elasticsearch.index.total.bulk.total_time_in_millis), merge_size_bytes = MAX(elasticsearch.index.total.merges.total_size_in_bytes), request_cache_hits = MAX(elasticsearch.index.total.request_cache.hit_count) BY elasticsearch.cluster.name, elasticsearch.index.name\n| EVAL avg_index_latency_ms = CASE(indexing_total > 0, indexing_time_ms / indexing_total, 0), avg_search_latency_ms = CASE(search_total > 0, search_time_ms / search_total, 0), pressure_score = indexing_total + search_total + COALESCE(segments_count, 0) * 100 + COALESCE(shards_total, 0) * 100 + COALESCE(fielddata_memory_bytes, 0) / 1048576 + COALESCE(query_cache_evictions, 0) * 1000000 + COALESCE(request_cache_evictions, 0) * 1000000 + COALESCE(request_cache_misses, 0) + COALESCE(merge_size_bytes, 0) / 1000000\n| SORT pressure_score DESC\n| LIMIT 50"
+  },
+  "description": "Identify indices causing cluster pressure through load, latency, shard growth, cache pressure, or storage growth.",
+  "id": "es-cluster-triage-index_pressure_analysis",
+  "tags": [
+    "es-cluster-triage",
+    "indices",
+    "observability",
+    "performance",
+    "stack-monitoring"
+  ],
+  "type": "esql"
+}

@@ -1,0 +1,29 @@
+{
+  "configuration": {
+    "params": {
+      "cluster_name": {
+        "description": "Optional cluster name filter; use an empty string to query all clusters.",
+        "type": "string"
+      },
+      "index_name": {
+        "description": "Optional index name filter; use an empty string to query all indices.",
+        "type": "string"
+      },
+      "lookback": {
+        "description": "Lookback window as ES|QL time span text (e.g. 15 minutes, 1 hour, 24 hours).",
+        "type": "string"
+      }
+    },
+    "query": "FROM .monitoring-es-*\n| WHERE @timestamp >= NOW() - TO_TIMEDURATION(?lookback)\n| WHERE metricset.name == \"shard\"\n| WHERE elasticsearch.cluster.name IS NOT NULL AND elasticsearch.index.name IS NOT NULL\n| WHERE elasticsearch.shard.state != \"STARTED\"\n| WHERE (?cluster_name == \"\" OR elasticsearch.cluster.name == ?cluster_name)\n| WHERE (?index_name == \"\" OR elasticsearch.index.name == ?index_name)\n| STATS shards = COUNT(), first_seen = MIN(@timestamp), last_seen = MAX(@timestamp) BY elasticsearch.cluster.name, elasticsearch.index.name, elasticsearch.shard.state, elasticsearch.shard.source_node.name\n| SORT shards DESC, last_seen DESC\n| LIMIT 50"
+  },
+  "description": "Find shard states that are not STARTED and may indicate allocation issues.",
+  "id": "es-cluster-triage-unassigned_shard_analysis",
+  "tags": [
+    "es-cluster-triage",
+    "indices",
+    "observability",
+    "performance",
+    "stack-monitoring"
+  ],
+  "type": "esql"
+}

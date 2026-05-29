@@ -1,0 +1,43 @@
+{
+  "name": "elastic-cluster-triage-agent",
+  "version": "1.0.0",
+  "description": "MCP server exposing 19 ES|QL triage tools for Elasticsearch cluster diagnostics via Stack Monitoring data",
+  "type": "module",
+  "license": "Elastic-2.0",
+  "main": "dist/main.js",
+  "scripts": {
+    "build": "tsc --noEmit && tsc -p tsconfig.server.json && node scripts/build-views.js",
+    "build:views": "node scripts/build-views.js",
+    "build:server": "tsc -p tsconfig.server.json",
+    "start": "node dist/main.js",
+    "start:stdio": "node dist/main.js --stdio",
+    "dev": "concurrently --raw \"node scripts/build-views.js --watch\" \"tsx watch main.ts --stdio\"",
+    "typecheck": "tsc --noEmit",
+    "mcpb:pack": "bash scripts/build-mcpb.sh"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/ext-apps": "^1.7.2",
+    "@modelcontextprotocol/sdk": "^1.27.1",
+    "cors": "^2.8.6",
+    "express": "^5.2.1",
+    "react": "^19.2.6",
+    "react-dom": "^19.2.6",
+    "zod": "^3.24.1"
+  },
+  "devDependencies": {
+    "@types/cors": "^2.8.19",
+    "@types/express": "^5.0.6",
+    "@types/node": "^22.0.0",
+    "@types/react": "^19.2.15",
+    "@types/react-dom": "^19.2.3",
+    "@vitejs/plugin-react": "^6.0.2",
+    "concurrently": "^9.2.1",
+    "tsx": "^4.21.0",
+    "typescript": "^5.5.0",
+    "vite": "^8.0.14",
+    "vite-plugin-singlefile": "^2.3.3"
+  }
+}

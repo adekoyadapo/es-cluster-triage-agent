@@ -1,0 +1,27 @@
+{
+  "configuration": {
+    "params": {
+      "cluster_name": {
+        "description": "Optional cluster name filter; use an empty string to query all clusters.",
+        "type": "string"
+      },
+      "index_name": {
+        "description": "Optional index name filter; use an empty string to query all indices.",
+        "type": "string"
+      },
+      "lookback": {
+        "description": "Lookback window as ES|QL time span text (e.g. 15 minutes, 1 hour, 24 hours).",
+        "type": "string"
+      }
+    },
+    "query": "FROM .monitoring-es-*\n| WHERE @timestamp >= NOW() - TO_TIMEDURATION(?lookback)\n| WHERE metricset.name == \"index\"\n| WHERE elasticsearch.cluster.name IS NOT NULL AND elasticsearch.index.name IS NOT NULL\n| WHERE (?cluster_name == \"\" OR elasticsearch.cluster.name == ?cluster_name)\n| WHERE (?index_name == \"\" OR elasticsearch.index.name == ?index_name)\n| STATS search_total = MAX(elasticsearch.index.total.search.query_total), search_time_ms = MAX(elasticsearch.index.total.search.query_time_in_millis), docs_total = MAX(elasticsearch.index.total.docs.count), segments_count = MAX(elasticsearch.index.total.segments.count), request_cache_hits = MAX(elasticsearch.index.total.request_cache.hit_count), request_cache_misses = MAX(elasticsearch.index.total.request_cache.miss_count), query_cache_evictions = MAX(elasticsearch.index.total.query_cache.evictions), fielddata_memory_bytes = MAX(elasticsearch.index.total.fielddata.memory_size_in_bytes) BY elasticsearch.cluster.name, elasticsearch.index.name\n| EVAL avg_query_latency_ms = CASE(search_total > 0, search_time_ms / search_total, 0), pressure_score = CASE(search_total > 0, search_time_ms / search_total, 0) + COALESCE(search_total, 0) + COALESCE(query_cache_evictions, 0) + COALESCE(fielddata_memory_bytes, 0) / 1048576\n| SORT avg_query_latency_ms DESC, search_total DESC\n| LIMIT 25"
+  },
+  "description": "Find high search volume or slow searches by index.",
+  "id": "es-cluster-triage-search_hotspots",
+  "tags": [
+    "es-cluster-triage",
+    "observability",
+    "stack-monitoring"
+  ],
+  "type": "esql"
+}

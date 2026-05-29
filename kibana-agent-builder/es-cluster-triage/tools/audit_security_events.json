@@ -1,0 +1,27 @@
+{
+  "configuration": {
+    "params": {
+      "cluster_name": {
+        "description": "Optional cluster name filter; use an empty string to query all clusters.",
+        "type": "string"
+      },
+      "lookback": {
+        "description": "Lookback window as ES|QL time span text (e.g. 15 minutes, 1 hour, 24 hours).",
+        "type": "string"
+      },
+      "node_name": {
+        "description": "Optional node name filter; use an empty string to query all nodes.",
+        "type": "string"
+      }
+    },
+    "query": "FROM elastic-cloud-logs-8\n| WHERE @timestamp >= NOW() - TO_TIMEDURATION(?lookback)\n| WHERE event.action IS NOT NULL\n| WHERE event.outcome == \"failure\" OR event.action LIKE \"*denied*\" OR event.action LIKE \"*authentication*\"\n| WHERE (?cluster_name == \"\" OR elasticsearch.cluster.name == ?cluster_name)\n| WHERE (?node_name == \"\" OR host.name == ?node_name)\n| STATS events = COUNT() BY bucket = DATE_TRUNC(15 minutes, @timestamp), event.action, user.name, source.ip\n| SORT bucket DESC, events DESC\n| LIMIT 50"
+  },
+  "description": "Summarize authentication and authorization failures from audit or security logs.",
+  "id": "es-cluster-triage-audit_security_events",
+  "tags": [
+    "es-cluster-triage",
+    "observability",
+    "stack-monitoring"
+  ],
+  "type": "esql"
+}
