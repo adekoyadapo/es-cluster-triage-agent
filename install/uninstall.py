@@ -291,15 +291,18 @@ def main() -> int:
     if connector_id:
         delete_item(kb_url, hdr, space_path(namespace, f"/api/actions/connector/{connector_id}"), f"connector/{connector_id}")
 
-    # ES aliases
+    # ES aliases — use POST /_aliases with remove action (DELETE /_alias/{name} is not a valid endpoint)
     for alias_name in filter(None, [monitoring_alias, log_alias if log_alias != "elastic-cloud-logs-8" else None]):
         if alias_name and es_url:
             info(f"Removing ES alias '{alias_name}'...")
             try:
-                es_request(es_url, hdr, "DELETE", f"/_alias/{alias_name}", timeout=15)
+                es_request(es_url, hdr, "POST", "/_aliases", timeout=15, body={
+                    "actions": [{"remove": {"index": "*", "alias": alias_name}}]
+                })
                 ok(f"Alias '{alias_name}' removed")
             except RuntimeError as exc:
-                if "HTTP 404" in str(exc):
+                exc_str = str(exc)
+                if "HTTP 404" in exc_str or "alias_not_found" in exc_str.lower():
                     warn(f"Alias '{alias_name}' already gone")
                 else:
                     warn(f"Alias removal: {exc}")
