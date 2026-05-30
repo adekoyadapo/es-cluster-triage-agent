@@ -140,7 +140,8 @@ def ask_secret(prompt: str) -> str:
         raise SystemExit(0)
     val = val.strip()
     if val:
-        print(f"  {c(DIM, '••••••••')}  {c(DIM, '(received)')}")
+        sys.stderr.write(f"  {c(DIM, '••••••••')}  {c(DIM, '(received)')}\n")
+        sys.stderr.flush()
     return val
 
 
@@ -341,9 +342,10 @@ def show_api_key_guide() -> None:
     If your key lacks manage, aliases are skipped and tools query the raw patterns directly
   · {c(BOLD, 'monitor_inference')} is required for the agent to use the Elasticsearch Inference
     API (ES|QL generation, agent chat, built-in tools)
-  · Workflow privileges ({c(BOLD, 'workflowsManagement:*')}) must be listed individually — unlike
-    agentBuilder which uses feature_agentBuilder.all, the workflows feature exposes
-    its privileges directly by name. The error message confirms each exact name needed.
+  · {c(BOLD, 'workflowsManagement:*')} privileges are Kibana route-level privilege names. If you
+    still get 403 on workflow creation despite adding these, the most reliable
+    fix is to use the {c(BOLD, 'elastic')} superuser (username + password) for installation —
+    the installer accepts username/password as well as API keys.
   · {c(BOLD, 'allow_restricted_indices: true')} is needed for .monitoring-es-* patterns;
     omit it if using metrics-elasticsearch.* or other non-system indices
   · Using username/password (elastic or superuser) also works — no key needed
@@ -672,11 +674,16 @@ def provision_connector(kb_url: str, hdr: tuple[str, str], space_id: str, webhoo
     return resp.get("id", connector_id)
 
 
+class WorkflowPermissionError(Exception):
+    """Raised when the API key lacks workflow management privileges."""
+
+
 def deploy_workflow_yaml(
     kb_url: str, hdr: tuple[str, str], namespace: str,
     workflow_id: str, yaml_text: str, wf_name: str = "",
 ) -> None:
-    """POST first, fall back to PUT on 409 (Kibana workflow IDs are globally unique)."""
+    """POST first, fall back to PUT on 409 (Kibana workflow IDs are globally unique).
+    Raises WorkflowPermissionError on 403 so callers can handle gracefully."""
     wf_path = space_path(namespace, f"/api/workflows/workflow/{workflow_id}")
     body: dict[str, Any] = {"id": workflow_id, "yaml": yaml_text}
     if wf_name:
@@ -684,7 +691,10 @@ def deploy_workflow_yaml(
     try:
         kibana_request(kb_url, hdr, "POST", space_path(namespace, "/api/workflows/workflow"), body=body)
     except RuntimeError as exc:
-        if "HTTP 409" not in str(exc):
+        exc_str = str(exc)
+        if "HTTP 403" in exc_str:
+            raise WorkflowPermissionError(exc_str)
+        if "HTTP 409" not in exc_str:
             raise
         put_body: dict[str, Any] = {"yaml": yaml_text}
         if wf_name:
@@ -692,6 +702,9 @@ def deploy_workflow_yaml(
         try:
             kibana_request(kb_url, hdr, "PUT", wf_path, body=put_body)
         except RuntimeError as put_exc:
+            put_str = str(put_exc)
+            if "HTTP 403" in put_str:
+                raise WorkflowPermissionError(put_str)
             warn(f"Workflow update: {put_exc}")
 
 
@@ -844,9 +857,18 @@ def deploy_workflows(
         return yaml
 
     def deploy_and_verify_workflow(wf_id: str, yaml_text: str, wf_name: str) -> bool:
-        deploy_workflow_yaml(kb_url, hdr, namespace, wf_id, yaml_text, wf_name=wf_name)
         sp = f"/s/{namespace}" if namespace != "default" else ""
         wf_ui_url = f"{kb_url}{sp}/app/management/insightsAndAlerting/triggersActionsConnectors/workflows"
+        try:
+            deploy_workflow_yaml(kb_url, hdr, namespace, wf_id, yaml_text, wf_name=wf_name)
+        except WorkflowPermissionError:
+            warn(f"Workflow '{wf_name}' skipped — API key lacks workflow management privileges")
+            info("workflowsManagement:create/update is a Kibana route-level privilege that may")
+            info("require a Kibana role assignment rather than a direct API key privilege.")
+            info("Easiest fix: re-run install using the elastic superuser (username + password).")
+            info(f"Or create the workflow manually in Kibana → {wf_ui_url}")
+            info(f"Workflow ID: {wf_id}")
+            return False
         # Verify it landed — 403 means no workflowsManagement:read privilege, treat as deployed
         wf_data = get_if_exists(kb_url, hdr, space_path(namespace, f"/api/workflows/workflow/{wf_id}"))
         if wf_data:
@@ -854,10 +876,8 @@ def deploy_workflows(
             ok(f"Workflow '{returned_name}' deployed ✓  ({wf_id})")
             info(f"View in Kibana → {wf_ui_url}")
             return True
-        # None can mean 403 (no read privilege) or genuine failure — assume deployed, warn to verify
         ok(f"Workflow '{wf_name}' deploy request sent ({wf_id})")
         info(f"Verify in Kibana → {wf_ui_url}")
-        info("(Add workflowsManagement:read to your API key to enable post-deploy verification)")
         return True
 
     # Warn if a previous install left the old long-form IDs (they cannot be deleted via API)
