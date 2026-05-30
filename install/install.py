@@ -138,7 +138,10 @@ def ask_secret(prompt: str) -> str:
     except (EOFError, KeyboardInterrupt):
         print()
         raise SystemExit(0)
-    return val.strip()
+    val = val.strip()
+    if val:
+        print(f"  {c(DIM, '••••••••')}  {c(DIM, '(received)')}")
+    return val
 
 
 def confirm(prompt: str, default: bool = True) -> bool:
@@ -310,36 +313,34 @@ def show_api_key_guide() -> None:
   {c(DIM, '      "cluster": ["monitor", "monitor_inference"],')}
   {c(DIM, '      "indices": [{')}
   {c(DIM, '        "names": ["<your-monitoring-pattern>", "<your-log-pattern>"],')}
-  {c(DIM, '        "privileges": ["read", "view_index_metadata"],')}
+  {c(DIM, '        "privileges": ["manage", "read", "view_index_metadata"],')}
   {c(DIM, '        "allow_restricted_indices": true')}
   {c(DIM, '      }],')}
   {c(DIM, '      "applications": [{')}
   {c(DIM, '        "application": "kibana-.kibana",')}
   {c(DIM, '        "privileges": [')}
   {c(DIM, '          "feature_agentBuilder.all",')}
-  {c(DIM, '          "feature_actions.read",')}
-  {c(DIM, '          "workflowsManagement:read",')}
-  {c(DIM, '          "workflowsManagement:create",')}
-  {c(DIM, '          "workflowsManagement:update",')}
-  {c(DIM, '          "workflowsManagement:delete"')}
+  {c(DIM, '          "feature_workflows.all",')}
+  {c(DIM, '          "feature_actions.read"')}
   {c(DIM, '        ],')}
-  {c(DIM, '        "resources": ["space:default"]')}
+  {c(DIM, '        "resources": ["space:<your-namespace>"]')}
   {c(DIM, '      }]')}
   {c(DIM, '    }')}
   {c(DIM, '  }')}
   {c(DIM, '}')}
 
   {c(YELLOW, "Notes:")}
-  · Replace <your-monitoring-pattern> and <your-log-pattern> with the actual
-    index names you'll enter in step 5 (e.g. .monitoring-es-8-mb, filebeat-9.3.4)
-  · Replace {c(BOLD, '"space:default"')} with {c(BOLD, '"space:<your-namespace>"')} if you're installing
-    into a custom Kibana space (e.g. "space:cluster-triage")
-  · {c(BOLD, 'monitor_inference')} is required for the agent to call the Elasticsearch Inference
-    API (used by the built-in tools and ES|QL query generation)
-  · {c(BOLD, 'feature_agentBuilder.all')} is the correct application privilege name for API keys
-    (the UI shows it as "Agent Builder: All" under Analytics)
-  · {c(BOLD, 'allow_restricted_indices: true')} is needed when your monitoring pattern covers
-    restricted indices like .monitoring-es-*; omit it if using metrics-elasticsearch.*
+  · Replace <your-monitoring-pattern> / <your-log-pattern> with the actual index
+    names you'll enter in step 5 (e.g. .monitoring-es-8-mb, filebeat-9.3.4)
+  · Replace <your-namespace> with your Kibana space name (e.g. cluster-triage),
+    or use {c(BOLD, 'space:default')} for the default space
+  · {c(BOLD, 'manage')} on indices is needed to create aliases (es-monitoring, elastic-cloud-logs-8)
+    If your key lacks manage, aliases are skipped and tools query the raw patterns directly
+  · {c(BOLD, 'monitor_inference')} is required for the agent to use the Elasticsearch Inference
+    API (ES|QL generation, agent chat, built-in tools)
+  · {c(BOLD, 'feature_workflows.all')} grants all workflow operations (create/read/update/delete)
+  · {c(BOLD, 'allow_restricted_indices: true')} is needed for .monitoring-es-* patterns;
+    omit it if using metrics-elasticsearch.* or other non-system indices
   · Using username/password (elastic or superuser) also works — no key needed
     """)
 
