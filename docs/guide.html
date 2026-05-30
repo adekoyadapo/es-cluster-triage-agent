@@ -267,7 +267,7 @@ footer p{color:var(--el-muted);font-size:.82rem}
       </tr>
       <tr>
         <td>Audit Logging</td><td><span class="chip chip-yellow">RECOMMENDED</span></td>
-        <td>Enable on monitored clusters to populate the <code>audit_security_events</code> tool. Filter high-volume events to reduce noise.</td>
+        <td>Enable on monitored clusters (Enterprise required) to populate the <code>audit_security_events</code> tool. Requires ignore filters to control volume.</td>
         <td><a class="doc-link" href="https://www.elastic.co/docs/deploy-manage/security/logging-configuration/enabling-audit-logs" target="_blank" rel="noopener">Audit logging</a></td>
       </tr>
       <tr>
@@ -372,8 +372,8 @@ footer p{color:var(--el-muted);font-size:.82rem}
   <h3>1. Enterprise License <span class="chip chip-red" style="vertical-align:middle">REQUIRED</span></h3>
   <div class="card" style="margin-top:10px">
     <p style="margin:0 0 10px 0;font-size:.9rem">
-      Agent Builder, AI Connector, and audit logging all require an <strong>Enterprise</strong> subscription
-      (or an active trial) on the monitoring cluster. Basic and Gold licenses are insufficient.
+      Agent Builder, AI Connector, Kibana Workflows, and audit logging all require an
+      <strong>Enterprise</strong> subscription (or an active trial) on the monitoring cluster.
     </p>
     <table style="margin:0">
       <thead><tr><th>Feature used by this agent</th><th>Minimum tier</th></tr></thead>
@@ -381,7 +381,7 @@ footer p{color:var(--el-muted);font-size:.82rem}
         <tr><td>Agent Builder (deploy AI agent)</td><td><span class="chip chip-red">Enterprise</span></td></tr>
         <tr><td>AI Connector (LLM integration)</td><td><span class="chip chip-red">Enterprise</span></td></tr>
         <tr><td>Kibana Workflows</td><td><span class="chip chip-red">Enterprise</span></td></tr>
-        <tr><td>Audit logging</td><td><span class="chip chip-yellow">Gold+</span></td></tr>
+        <tr><td>Audit logging</td><td><span class="chip chip-red">Enterprise</span></td></tr>
         <tr><td>Stack monitoring (basic)</td><td><span class="chip chip-teal">Basic</span></td></tr>
       </tbody>
     </table>
@@ -522,63 +522,212 @@ GET filebeat-*/_count</code></pre>
   <!-- ── 4. Audit Logging ── -->
   <h3>4. Audit Logging <span class="chip chip-yellow" style="vertical-align:middle">RECOMMENDED</span></h3>
   <p style="color:var(--el-muted);font-size:.9rem;margin-bottom:12px">
-    Enable on the <strong>monitored clusters</strong> (not the monitoring cluster) to populate the
-    <code>audit_security_events</code> tool. Audit logs are then shipped to the monitoring cluster
-    via Elastic Agent or Filebeat. Use ignore policies to suppress high-volume noise.
+    Enable on the <strong>monitored clusters</strong> (requires Enterprise license) to populate the
+    <code>audit_security_events</code> tool. Logs are shipped to the monitoring cluster
+    via Elastic Agent or Filebeat. <strong>Ignore filters are essential</strong> — without them audit
+    logs generate very high indexing volume from internal system operations.
   </p>
 
-  <div class="card">
-    <div style="font-weight:700;margin-bottom:8px">elasticsearch.yml — minimal recommended config</div>
-    <pre><code>xpack.security.audit.enabled: true
+  <div class="callout-critical">
+    ⚠️ <strong>Volume warning:</strong> Unfiltered audit logging can generate millions of events per hour
+    in a busy cluster. Always configure <code>ignore_filters</code> before enabling in production.
+    Start with the examples below and tune to your environment.
+  </div>
 
-# Include only security-relevant events (reduces volume significantly)
-xpack.security.audit.logfile.events.include:
-  - authentication_failed
-  - anonymous_access_denied
-  - realm_authentication_failed
-  - access_denied
-  - security_config_change
-  - tampered_request
-  - run_as_denied
-
-# Suppress noisy internal Kibana operations and successful reads
-xpack.security.audit.logfile.events.ignore_filters:
-  kibana_system_ops:
-    users: ["kibana_system"]
-    indices: [".kibana*", ".monitoring-*", "metrics-*"]
-  suppress_bulk_reads:
-    actions:
-      - "indices:data/read/search*"
-      - "indices:data/read/get*"
-      - "indices:data/read/msearch*"
-
-# Include node identity in log lines (useful for multi-node clusters)
-xpack.security.audit.logfile.emit_node_name: true
-xpack.security.audit.logfile.emit_node_id: true</code></pre>
-
-    <div class="callout callout-warn" style="margin-top:12px">
-      ⚠️ <strong>Note:</strong> <code>security_config_change</code> events <strong>cannot</strong> be filtered
-      by ignore policies — they always appear when audit logging is enabled. This is by design for compliance.
-    </div>
-
-    <table style="margin-top:12px;font-size:.85rem">
-      <thead><tr><th>Event type</th><th>Volume</th><th>Description</th></tr></thead>
+  <!-- Event volume table -->
+  <div class="card" style="margin-top:16px">
+    <div style="font-weight:700;margin-bottom:10px">Elasticsearch audit event types — volume guide</div>
+    <table style="margin:0;font-size:.85rem">
+      <thead><tr><th>Event type</th><th>Volume</th><th>Recommendation</th></tr></thead>
       <tbody>
-        <tr><td><code>authentication_failed</code></td><td>Low</td><td>Bad credentials — keep this</td></tr>
-        <tr><td><code>access_denied</code></td><td>Medium</td><td>Privilege violations — keep this</td></tr>
-        <tr><td><code>security_config_change</code></td><td>Low</td><td>Always logged — cannot be filtered</td></tr>
-        <tr><td><code>access_granted</code></td><td><strong>Very high</strong></td><td>Exclude — every read/write generates one</td></tr>
-        <tr><td><code>authentication_success</code></td><td><strong>Very high</strong></td><td>Exclude — every login generates one</td></tr>
-        <tr><td><code>connection_granted</code></td><td>High</td><td>Exclude unless auditing network access</td></tr>
+        <tr><td><code>authentication_failed</code></td><td>Low</td><td>✓ Always keep — primary security signal</td></tr>
+        <tr><td><code>anonymous_access_denied</code></td><td>Low</td><td>✓ Keep — indicates unauthenticated probe</td></tr>
+        <tr><td><code>realm_authentication_failed</code></td><td>Low</td><td>✓ Keep — per-realm failure detail</td></tr>
+        <tr><td><code>access_denied</code></td><td>Medium</td><td>✓ Keep — privilege violation signal</td></tr>
+        <tr><td><code>tampered_request</code></td><td>Very low</td><td>✓ Keep — cannot be legitimately common</td></tr>
+        <tr><td><code>run_as_denied</code></td><td>Low</td><td>✓ Keep — impersonation attempt</td></tr>
+        <tr><td><code>security_config_change</code></td><td>Low</td><td>⚠ Always logged — <strong>cannot be filtered</strong> by ignore policies</td></tr>
+        <tr><td><code>authentication_success</code></td><td><strong>Very high</strong></td><td>✗ Exclude — every API call generates one</td></tr>
+        <tr><td><code>access_granted</code></td><td><strong>Very high</strong></td><td>✗ Exclude via ignore_filters by default</td></tr>
+        <tr><td><code>connection_granted</code></td><td>High</td><td>✗ Exclude unless auditing IP-filter changes</td></tr>
+        <tr><td><code>run_as_granted</code></td><td>Medium</td><td>Optional — keep if run-as is used</td></tr>
       </tbody>
     </table>
+  </div>
 
-    <div class="doc-links" style="margin-top:12px">
-      <a class="doc-link" href="https://www.elastic.co/docs/deploy-manage/security/logging-configuration/enabling-audit-logs" target="_blank" rel="noopener">Enable audit logging</a>
-      <a class="doc-link" href="https://www.elastic.co/docs/deploy-manage/security/logging-configuration/configuring-audit-logs" target="_blank" rel="noopener">Configure audit logging</a>
-      <a class="doc-link" href="https://www.elastic.co/docs/deploy-manage/security/logging-configuration/logfile-audit-events-ignore-policies" target="_blank" rel="noopener">Ignore policies</a>
-      <a class="doc-link" href="https://www.elastic.co/guide/en/elasticsearch/reference/current/audit-event-types.html" target="_blank" rel="noopener">All audit event types</a>
+  <!-- Elasticsearch config -->
+  <div class="card" style="margin-top:16px">
+    <div style="font-weight:700;margin-bottom:4px">Elasticsearch — <code>elasticsearch.yml</code></div>
+    <div style="font-size:.82rem;color:var(--el-muted);margin-bottom:10px">Also used verbatim inside ECK <code>spec.nodeSets[].config</code> and Elastic Cloud "User settings"</div>
+    <pre><code>xpack.security.audit.enabled: true
+
+# Narrow to security-relevant events only — omit authentication_success (very noisy)
+xpack.security.audit.logfile.events.include: "authentication_success"
+
+# Emit request body for search query auditing — use carefully (contains query content)
+xpack.security.audit.logfile.events.emit_request_body: false
+
+# ── Ignore filter policies ────────────────────────────────────────────────────
+# Each policy: event is suppressed when ALL conditions in the policy match.
+# Multiple policies are OR'd — suppressed if any single policy matches.
+# Valid filter keys: users, realms, actions, roles, indices
+
+xpack.security.audit.logfile.events.ignore_filters:
+
+  # Suppress all activity from internal system users (very high volume)
+  system_users:
+    users:
+      - "*_system"
+      - "found-internal-*"
+      - "_xpack_security"
+      - "_xpack"
+      - "elastic/fleet-server"
+      - "_async_search"
+      - "found-internal-admin-proxy"
+
+  # Suppress API-key-authenticated traffic (filter by realm name)
+  # Note: use the realm name as configured — "_es_api_key" is not a reliable value
+  api_key_realm:
+    realms: ["_es_api_key"]
+
+  # Suppress access on internal monitoring and ML indices
+  internal_indices:
+    indices:
+      - "*ml-inference-native-*"
+      - "*monitoring-es-*"
+      - ".kibana*"
+      - ".reporting-*"
+      - "metrics-*"
+
+# Include node identity in each log line (useful for multi-node clusters)
+xpack.security.audit.logfile.emit_node_name: true
+xpack.security.audit.logfile.emit_node_id: true</code></pre>
+    <div class="callout callout-warn" style="margin-top:12px;margin-bottom:0">
+      ⚠️ <code>security_config_change</code> events are <strong>unfiltereable</strong> — ignore policies have no effect on them.
+      They can only be removed by adding <code>security_config_change</code> to <code>events.exclude</code>, which is not
+      recommended in regulated environments. This is intentional — security configuration mutations always leave a trace.
     </div>
+  </div>
+
+  <!-- Kibana config -->
+  <div class="card" style="margin-top:16px">
+    <div style="font-weight:700;margin-bottom:4px">Kibana — <code>kibana.yml</code></div>
+    <div style="font-size:.82rem;color:var(--el-muted);margin-bottom:10px">Also used verbatim inside ECK <code>spec.config</code>. Kibana audit settings are <strong>always static</strong> — restart required after changes.</div>
+    <pre><code>xpack.security.audit.enabled: true
+
+# ── Ignore filter policies ────────────────────────────────────────────────────
+# Kibana filter keys: categories, actions, outcomes, spaces, types, users
+# categories values: web | database | authentication
+# types values: creation | change | deletion | access
+
+xpack.security.audit.ignore_filters:
+
+  # Suppress every HTTP request trace (extremely high volume — recommended always)
+  - categories: [web]
+
+  # Suppress noisy internal saved-object lifecycle events
+  - actions:
+      - saved_object_open_point_in_time
+      - saved_object_close_point_in_time
+      - saved_object_find
+      - space_find
+
+  # Suppress successful read-only saved-object access (safe to omit for compliance)
+  - types: [access]
+    outcomes: [success]</code></pre>
+    <div class="callout callout-info" style="margin-top:12px;margin-bottom:0">
+      ℹ️ Kibana's <code>categories: [web]</code> suppresses the <code>http_request</code> event fired for every single
+      HTTP call through Kibana. This one filter alone can cut Kibana audit volume by 90%+ in a busy deployment.
+    </div>
+  </div>
+
+  <!-- ECK-specific -->
+  <div class="card" style="margin-top:16px">
+    <div style="font-weight:700;margin-bottom:4px">ECK — Kubernetes CRD placement</div>
+    <div style="font-size:.82rem;color:var(--el-muted);margin-bottom:10px">Settings are identical to the YAML above — just placed inside the CRD spec. Audit logs stay at container level unless <code>monitoring.logs.elasticsearchRefs</code> is configured.</div>
+    <pre><code>apiVersion: elasticsearch.k8s.elastic.co/v1
+kind: Elasticsearch
+spec:
+  nodeSets:
+    - name: default
+      config:
+        # Paste elasticsearch.yml settings here (dot-notation, same syntax)
+        xpack.security.audit.enabled: true
+        xpack.security.audit.logfile.events.ignore_filters:
+          system_users:
+            users: ["*_system", "found-internal-*", "_xpack_security", "_xpack",
+                    "elastic/fleet-server", "_async_search", "found-internal-admin-proxy"]
+          api_key_realm:
+            realms: ["_es_api_key"]
+          internal_indices:
+            indices: ["*ml-inference-native-*", "*monitoring-es-*"]
+  # Required: ship audit logs to monitoring cluster
+  monitoring:
+    logs:
+      elasticsearchRefs:
+        - name: monitoring-cluster
+---
+apiVersion: kibana.k8s.elastic.co/v1
+kind: Kibana
+spec:
+  config:
+    # Paste kibana.yml settings here
+    xpack.security.audit.enabled: true
+    xpack.security.audit.ignore_filters:
+      - categories: [web]
+      - actions: [saved_object_open_point_in_time, saved_object_close_point_in_time,
+                  saved_object_find, space_find]</code></pre>
+  </div>
+
+  <!-- Elastic Cloud -->
+  <div class="card" style="margin-top:16px">
+    <div style="font-weight:700;margin-bottom:4px">Elastic Cloud Hosted (ECH)</div>
+    <div style="font-size:.82rem;color:var(--el-muted);margin-bottom:10px">Settings are applied via the Cloud Console UI — the YAML syntax is identical to <code>elasticsearch.yml</code>.</div>
+    <div class="steps" style="margin:0">
+      <div class="step">
+        <div class="step-num"></div>
+        <div class="step-body">
+          <div class="step-title">Open your deployment → Edit</div>
+          <div class="step-desc">cloud.elastic.co → your deployment → Edit deployment</div>
+        </div>
+      </div>
+      <div class="step">
+        <div class="step-num"></div>
+        <div class="step-body">
+          <div class="step-title">Elasticsearch → "Manage user settings"</div>
+          <div class="step-desc">Paste the <code>elasticsearch.yml</code> config block above into the user settings editor.</div>
+        </div>
+      </div>
+      <div class="step">
+        <div class="step-num"></div>
+        <div class="step-body">
+          <div class="step-title">Kibana → "Edit user settings"</div>
+          <div class="step-desc">Paste the <code>kibana.yml</code> config block above. Save changes — triggers a rolling update.</div>
+        </div>
+      </div>
+    </div>
+    <div class="callout callout-warn" style="margin-top:12px;margin-bottom:0">
+      ⚠️ On ECH, audit logs remain at container level unless you have a monitoring deployment configured.
+      Ensure "Ship logs and metrics" is enabled in the deployment's monitoring settings and points to your
+      monitoring cluster before expecting audit events to appear in <code>filebeat-*</code> or <code>logs-elasticsearch.*</code>.
+    </div>
+  </div>
+
+  <!-- Dynamic settings note -->
+  <div class="callout callout-info" style="margin-top:16px">
+    ℹ️ <strong>Most audit settings are dynamic</strong> and can be changed via <code>PUT /_cluster/settings</code>
+    without a restart. The exception is <code>xpack.security.audit.enabled</code> itself — in ES 9.4 and earlier
+    this is a static setting that requires a rolling restart. From ES 9.5+ it is also dynamic.
+    Kibana audit settings are always static (restart required).
+  </div>
+
+  <div class="doc-links" style="margin-top:12px">
+    <a class="doc-link" href="https://www.elastic.co/docs/deploy-manage/security/logging-configuration/enabling-audit-logs" target="_blank" rel="noopener">Enable audit logging</a>
+    <a class="doc-link" href="https://www.elastic.co/docs/deploy-manage/security/logging-configuration/configuring-audit-logs" target="_blank" rel="noopener">Configure audit logging</a>
+    <a class="doc-link" href="https://www.elastic.co/docs/deploy-manage/security/logging-configuration/logfile-audit-events-ignore-policies" target="_blank" rel="noopener">Ignore policies reference</a>
+    <a class="doc-link" href="https://www.elastic.co/docs/reference/elasticsearch/elasticsearch-audit-events" target="_blank" rel="noopener">All ES audit event types</a>
+    <a class="doc-link" href="https://www.elastic.co/docs/reference/kibana/kibana-audit-events" target="_blank" rel="noopener">Kibana audit events</a>
+    <a class="doc-link" href="https://www.elastic.co/docs/reference/elasticsearch/configuration-reference/auding-settings" target="_blank" rel="noopener">Auditing settings reference</a>
   </div>
 </section>
 
