@@ -320,8 +320,11 @@ def show_api_key_guide() -> None:
   {c(DIM, '        "application": "kibana-.kibana",')}
   {c(DIM, '        "privileges": [')}
   {c(DIM, '          "feature_agentBuilder.all",')}
-  {c(DIM, '          "feature_workflows.all",')}
-  {c(DIM, '          "feature_actions.read"')}
+  {c(DIM, '          "feature_actions.read",')}
+  {c(DIM, '          "workflowsManagement:read",')}
+  {c(DIM, '          "workflowsManagement:create",')}
+  {c(DIM, '          "workflowsManagement:update",')}
+  {c(DIM, '          "workflowsManagement:delete"')}
   {c(DIM, '        ],')}
   {c(DIM, '        "resources": ["space:<your-namespace>"]')}
   {c(DIM, '      }]')}
@@ -338,7 +341,9 @@ def show_api_key_guide() -> None:
     If your key lacks manage, aliases are skipped and tools query the raw patterns directly
   · {c(BOLD, 'monitor_inference')} is required for the agent to use the Elasticsearch Inference
     API (ES|QL generation, agent chat, built-in tools)
-  · {c(BOLD, 'feature_workflows.all')} grants all workflow operations (create/read/update/delete)
+  · Workflow privileges ({c(BOLD, 'workflowsManagement:*')}) must be listed individually — unlike
+    agentBuilder which uses feature_agentBuilder.all, the workflows feature exposes
+    its privileges directly by name. The error message confirms each exact name needed.
   · {c(BOLD, 'allow_restricted_indices: true')} is needed for .monitoring-es-* patterns;
     omit it if using metrics-elasticsearch.* or other non-system indices
   · Using username/password (elastic or superuser) also works — no key needed

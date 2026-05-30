@@ -242,7 +242,7 @@ footer p{color:var(--el-muted);font-size:.82rem}
       </tr>
       <tr>
         <td>Auth credentials</td><td>—</td>
-        <td>One API key with <code>manage</code> + <code>read</code> + <code>view_index_metadata</code> on index patterns; <code>feature_agentBuilder.all</code>, <code>feature_workflows.all</code>, <code>feature_actions.read</code> on <code>kibana-.kibana</code>; cluster privileges <code>monitor</code> + <code>monitor_inference</code> — or superuser credentials</td>
+        <td>One API key with <code>manage</code> + <code>read</code> + <code>view_index_metadata</code> on index patterns; <code>feature_agentBuilder.all</code>, <code>feature_actions.read</code>, <code>workflowsManagement:read/create/update/delete</code> on <code>kibana-.kibana</code>; cluster privileges <code>monitor</code> + <code>monitor_inference</code> — or superuser credentials</td>
         <td><a class="doc-link" href="https://www.elastic.co/docs/deploy-manage/api-keys/elasticsearch-api-keys" target="_blank" rel="noopener">API Keys</a></td>
       </tr>
       <tr>
@@ -279,8 +279,11 @@ footer p{color:var(--el-muted);font-size:.82rem}
         "application": "kibana-.kibana",
         "privileges": [
           "feature_agentBuilder.all",
-          "feature_workflows.all",
-          "feature_actions.read"
+          "feature_actions.read",
+          "workflowsManagement:read",
+          "workflowsManagement:create",
+          "workflowsManagement:update",
+          "workflowsManagement:delete"
         ],
         "resources": ["space:&lt;your-namespace&gt;"]
       }]
@@ -311,8 +314,8 @@ footer p{color:var(--el-muted);font-size:.82rem}
       API keys require specific Kibana feature privilege names — not the generic <code>"all"</code> shorthand:
       <ul style="margin:4px 0 0 16px;padding:0;font-size:.85rem">
         <li><code>feature_agentBuilder.all</code> — deploy and use agents, tools, skills, and chat</li>
-        <li><code>feature_workflows.all</code> — create, read, update, and delete workflows</li>
         <li><code>feature_actions.read</code> — required when the agent uses AI connectors</li>
+        <li><code>workflowsManagement:read/create/update/delete</code> — the workflows feature exposes privileges directly by operation name (unlike Agent Builder which uses the <code>feature_*.all</code> pattern). Each must be listed explicitly.</li>
       </ul>
     </p>
     <p style="margin:8px 0 4px 0;font-size:.85rem">
