@@ -140,8 +140,12 @@ def ask_secret(prompt: str) -> str:
         raise SystemExit(0)
     val = val.strip()
     if val:
-        sys.stderr.write(f"  {c(DIM, '••••••••')}  {c(DIM, '(received)')}\n")
-        sys.stderr.flush()
+        try:
+            with open("/dev/tty", "w") as tty:
+                tty.write(f"  {c(DIM, '••••••••')}  {c(DIM, '(received)')}\n")
+                tty.flush()
+        except OSError:
+            print(f"  {c(DIM, '••••••••')}  {c(DIM, '(received)')}", flush=True)
     return val
 
 
@@ -1010,7 +1014,8 @@ def stream_agent_chat(
             full_text = ""
             buf = b""
             current_event = ""
-            while True:
+            done = False
+            while not done:
                 chunk = resp.read(512)
                 if not chunk:
                     break
@@ -1020,13 +1025,16 @@ def stream_agent_chat(
                     line = line_bytes.decode("utf-8", "replace").rstrip("\r")
                     if line.startswith("event:"):
                         current_event = line[6:].strip()
+                        log(f"  SSE event: {current_event}")
                         continue
                     if not line.startswith("data:"):
                         continue
                     data_str = line[5:].strip()
                     if not data_str or data_str == "[DONE]":
                         continue
+                    log(f"  SSE data ({current_event}): {data_str[:200]}")
                     if current_event == "round_complete":
+                        done = True
                         break
                     try:
                         obj = json.loads(data_str)
@@ -1044,8 +1052,14 @@ def stream_agent_chat(
                             tool_id = obj.get("tool_id", "")
                             if tool_id:
                                 print(f"\n  [calling tool: {tool_id}]", end="", flush=True)
+                        elif current_event == "error":
+                            err_msg = obj.get("message") or obj.get("error") or data_str[:200]
+                            log(f"  SSE error event: {err_msg}")
+                            warn(f"Agent returned error: {err_msg}")
+                            done = True
+                            break
                     except json.JSONDecodeError:
-                        pass
+                        log(f"  SSE non-JSON data: {data_str[:200]}")
             print()
             return bool(full_text.strip())
     except _HTTPError as exc:
