@@ -1038,22 +1038,24 @@ def stream_agent_chat(
                         break
                     try:
                         obj = json.loads(data_str)
+                        # Kibana wraps payload under a "data" key: {"data": {...}}
+                        payload = obj.get("data", obj)
                         if current_event == "message_chunk":
-                            text = obj.get("text_chunk", "")
+                            text = payload.get("text_chunk", "")
                             if text:
                                 print(text, end="", flush=True)
                                 full_text += text
                         elif current_event == "message_complete":
-                            content = obj.get("message_content", "")
+                            content = payload.get("message_content", "")
                             if content and not full_text:
                                 print(content, end="", flush=True)
                                 full_text = content
                         elif current_event == "tool_call":
-                            tool_id = obj.get("tool_id", "")
+                            tool_id = payload.get("tool_id", "")
                             if tool_id:
                                 print(f"\n  [calling tool: {tool_id}]", end="", flush=True)
                         elif current_event == "error":
-                            err_msg = obj.get("message") or obj.get("error") or data_str[:200]
+                            err_msg = payload.get("message") or payload.get("error") or data_str[:200]
                             log(f"  SSE error event: {err_msg}")
                             warn(f"Agent returned error: {err_msg}")
                             done = True
