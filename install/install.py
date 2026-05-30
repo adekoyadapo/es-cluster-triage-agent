@@ -318,7 +318,10 @@ def show_api_key_guide() -> None:
   {c(DIM, '        "privileges": [')}
   {c(DIM, '          "feature_agentBuilder.all",')}
   {c(DIM, '          "feature_actions.read",')}
-  {c(DIM, '          "workflowsManagement:read"')}
+  {c(DIM, '          "workflowsManagement:read",')}
+  {c(DIM, '          "workflowsManagement:create",')}
+  {c(DIM, '          "workflowsManagement:update",')}
+  {c(DIM, '          "workflowsManagement:delete"')}
   {c(DIM, '        ],')}
   {c(DIM, '        "resources": ["space:default"]')}
   {c(DIM, '      }]')}
