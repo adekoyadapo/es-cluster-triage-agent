@@ -359,6 +359,9 @@ def collect_credentials() -> dict[str, str]:
     if not kb_url.startswith("http"):
         err("URL must start with http:// or https://")
         raise SystemExit(1)
+    if kb_url.startswith("http://"):
+        warn("Kibana URL uses plain HTTP — credentials will be transmitted unencrypted")
+        warn("Use https:// for any cluster that is not localhost")
     creds["KB_URL"] = kb_url
 
     print(f"\n  {c(CYAN, 'Elasticsearch URL')}")
@@ -368,6 +371,9 @@ def collect_credentials() -> dict[str, str]:
     if not es_url.startswith("http"):
         err("URL must start with http:// or https://")
         raise SystemExit(1)
+    if es_url.startswith("http://"):
+        warn("Elasticsearch URL uses plain HTTP — credentials will be transmitted unencrypted")
+        warn("Use https:// for any cluster that is not localhost")
     creds["ES_URL"] = es_url
 
     print(f"\n  {c(CYAN, 'Authentication')}")

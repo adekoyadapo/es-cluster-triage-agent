@@ -131,6 +131,8 @@ td code{background:var(--el-code-bg);padding:2px 6px;border-radius:4px;font-size
   padding:14px 18px;font-size:.88rem;margin:16px 0}
 .callout-info{background:#0077CC10;border-color:#0077CC40}
 .callout-warn{background:#E7664C10;border-color:#E7664C40}
+.callout-critical{background:#E7664C14;border:2px solid #E7664C80;border-radius:10px;
+  padding:14px 18px;font-size:.9rem;margin:16px 0}
 
 /* ── Tool group colors ── */
 .grp{display:flex;gap:8px;align-items:flex-start;margin-bottom:12px}
@@ -155,6 +157,7 @@ footer p{color:var(--el-muted);font-size:.82rem}
   </span>
   <div class="nav-links">
     <a href="#prerequisites">Prerequisites</a>
+    <a href="#setup">Setup Guide</a>
     <a href="#install">Install</a>
     <a href="#tools">Tools</a>
     <a href="#workflow">Workflow</a>
@@ -222,31 +225,53 @@ footer p{color:var(--el-muted);font-size:.82rem}
   <h2><span>Prerequisites</span></h2>
   <p class="section-sub">What you need before running the installer.</p>
 
+  <div class="callout-critical">
+    <strong>⚠ Critical requirements</strong> — items marked <span class="chip chip-red">REQUIRED</span> below must be completed on the <strong>monitoring cluster</strong> before running the installer. See the <a href="#setup" style="color:var(--el-red)">Setup Guide</a> for step-by-step instructions.
+  </div>
+
   <table>
-    <thead><tr><th>Requirement</th><th>Minimum</th><th>Notes</th><th>Docs</th></tr></thead>
+    <thead><tr><th>Requirement</th><th>Level</th><th>Notes</th><th>Docs</th></tr></thead>
     <tbody>
       <tr>
-        <td>Python</td><td>3.8+</td>
-        <td>No external packages needed — stdlib only</td>
-        <td></td>
+        <td><strong>Enterprise License</strong></td>
+        <td><span class="chip chip-red">REQUIRED</span></td>
+        <td>Agent Builder, AI Connector, and audit logging all require an Enterprise (or trial) license on the <strong>monitoring cluster</strong></td>
+        <td><a class="doc-link" href="https://www.elastic.co/subscriptions" target="_blank" rel="noopener">Subscriptions</a></td>
       </tr>
       <tr>
-        <td>Kibana</td><td>8.12+</td>
-        <td>Agent Builder feature must be available</td>
-        <td><a class="doc-link" href="https://www.elastic.co/docs/explore-analyze/ai-features/elastic-agent-builder" target="_blank" rel="noopener">Agent Builder</a></td>
-      </tr>
-      <tr>
-        <td>Stack Monitoring</td><td>Any</td>
-        <td>Sending data to <code>.monitoring-es-*</code></td>
+        <td><strong>Stack Monitoring</strong></td>
+        <td><span class="chip chip-red">REQUIRED</span></td>
+        <td>Monitored clusters must ship metrics and logs to the monitoring cluster via Elastic Agent or Metricbeat/Filebeat. Data must be verified in the monitoring cluster before install.</td>
         <td><a class="doc-link" href="https://www.elastic.co/docs/deploy-manage/monitor/stack-monitoring" target="_blank" rel="noopener">Stack Monitoring</a></td>
       </tr>
       <tr>
-        <td>Auth credentials</td><td>—</td>
-        <td>One API key with <code>manage</code> + <code>read</code> + <code>view_index_metadata</code> on index patterns; <code>"all"</code> on <code>kibana-.kibana</code> with <code>"resources": ["*"]</code>; cluster privileges <code>monitor</code> + <code>monitor_inference</code> — or superuser credentials</td>
+        <td><strong>LLM / AI Connector</strong></td>
+        <td><span class="chip chip-red">REQUIRED</span></td>
+        <td>An AI Connector (OpenAI, Anthropic, Bedrock, or Gemini) configured in the monitoring cluster's Kibana — the Agent Builder uses it for all LLM calls. Mini/small models are not supported.</td>
+        <td><a class="doc-link" href="https://www.elastic.co/docs/reference/kibana/connectors-kibana/ai-connector" target="_blank" rel="noopener">AI Connector</a></td>
+      </tr>
+      <tr>
+        <td>Python</td><td><span class="chip chip-teal">INSTALLER</span></td>
+        <td>3.8+ — no external packages needed (stdlib only)</td>
+        <td></td>
+      </tr>
+      <tr>
+        <td>Kibana</td><td><span class="chip chip-teal">INSTALLER</span></td>
+        <td>8.12+ on the monitoring cluster; Agent Builder must be available</td>
+        <td><a class="doc-link" href="https://www.elastic.co/docs/explore-analyze/ai-features/elastic-agent-builder" target="_blank" rel="noopener">Agent Builder</a></td>
+      </tr>
+      <tr>
+        <td>Auth credentials</td><td><span class="chip chip-teal">INSTALLER</span></td>
+        <td>One API key covering both Kibana (all) and Elasticsearch (manage + read) — or superuser credentials</td>
         <td><a class="doc-link" href="https://www.elastic.co/docs/deploy-manage/api-keys/elasticsearch-api-keys" target="_blank" rel="noopener">API Keys</a></td>
       </tr>
       <tr>
-        <td>Node.js 22+</td><td>Optional</td>
+        <td>Audit Logging</td><td><span class="chip chip-yellow">RECOMMENDED</span></td>
+        <td>Enable on monitored clusters to populate the <code>audit_security_events</code> tool. Filter high-volume events to reduce noise.</td>
+        <td><a class="doc-link" href="https://www.elastic.co/docs/deploy-manage/security/logging-configuration/enabling-audit-logs" target="_blank" rel="noopener">Audit logging</a></td>
+      </tr>
+      <tr>
+        <td>Node.js 22+</td><td><span class="chip chip-teal">OPTIONAL</span></td>
         <td>Only for building the MCP desktop app</td>
         <td></td>
       </tr>
@@ -332,6 +357,228 @@ footer p{color:var(--el-muted);font-size:.82rem}
   <div class="callout" style="margin-top:10px">
     💡 <strong>Simplest option:</strong> Use the <code>elastic</code> superuser with its password — the installer
     accepts username/password in addition to API keys. No role-descriptor tuning needed.
+  </div>
+</section>
+
+<!-- ── Critical Setup Guide ──────────────────────────────────────────────────── -->
+<section id="setup">
+  <h2><span>Critical Setup</span> Guide</h2>
+  <p class="section-sub">
+    Complete these steps on your <strong>monitoring cluster</strong> before running the installer.
+    The triage agent queries data from this cluster — not directly from the clusters being monitored.
+  </p>
+
+  <!-- ── 1. Enterprise License ── -->
+  <h3>1. Enterprise License <span class="chip chip-red" style="vertical-align:middle">REQUIRED</span></h3>
+  <div class="card" style="margin-top:10px">
+    <p style="margin:0 0 10px 0;font-size:.9rem">
+      Agent Builder, AI Connector, and audit logging all require an <strong>Enterprise</strong> subscription
+      (or an active trial) on the monitoring cluster. Basic and Gold licenses are insufficient.
+    </p>
+    <table style="margin:0">
+      <thead><tr><th>Feature used by this agent</th><th>Minimum tier</th></tr></thead>
+      <tbody>
+        <tr><td>Agent Builder (deploy AI agent)</td><td><span class="chip chip-red">Enterprise</span></td></tr>
+        <tr><td>AI Connector (LLM integration)</td><td><span class="chip chip-red">Enterprise</span></td></tr>
+        <tr><td>Kibana Workflows</td><td><span class="chip chip-red">Enterprise</span></td></tr>
+        <tr><td>Audit logging</td><td><span class="chip chip-yellow">Gold+</span></td></tr>
+        <tr><td>Stack monitoring (basic)</td><td><span class="chip chip-teal">Basic</span></td></tr>
+      </tbody>
+    </table>
+    <div class="doc-links" style="margin-top:12px">
+      <a class="doc-link" href="https://www.elastic.co/subscriptions" target="_blank" rel="noopener">Elastic subscription tiers</a>
+      <a class="doc-link" href="https://www.elastic.co/elastic-stack/features" target="_blank" rel="noopener">Feature list by tier</a>
+    </div>
+  </div>
+
+  <!-- ── 2. Stack Monitoring ── -->
+  <h3>2. Stack Monitoring <span class="chip chip-red" style="vertical-align:middle">REQUIRED</span></h3>
+  <p style="color:var(--el-muted);font-size:.9rem;margin-bottom:12px">
+    Each cluster you want to triage must ship metrics and logs to the monitoring cluster.
+    The recommended method is <strong>Elastic Agent with the Elasticsearch integration</strong>.
+  </p>
+
+  <div class="callout callout-info" style="margin-bottom:16px">
+    ℹ️ <strong>Architecture:</strong> Ship from each <em>monitored</em> cluster → into the <em>monitoring</em> cluster.
+    The triage agent is deployed on the monitoring cluster and queries data landing there.
+  </div>
+
+  <div class="card" style="margin-bottom:16px">
+    <div style="font-weight:700;margin-bottom:10px">Setup steps (Elastic Agent — recommended)</div>
+    <div class="steps" style="margin:0">
+      <div class="step">
+        <div class="step-num"></div>
+        <div class="step-body">
+          <div class="step-title">Install Elastic Agent on each monitored node</div>
+          <div class="step-desc">Fleet-managed agent, or a standalone agent pointed at your monitoring cluster's output.</div>
+        </div>
+      </div>
+      <div class="step">
+        <div class="step-num"></div>
+        <div class="step-body">
+          <div class="step-title">Add the Elasticsearch integration</div>
+          <div class="step-desc">Fleet → Integrations → search <em>Elasticsearch</em> → Add. Enable both <strong>Metrics</strong> and <strong>Logs</strong> collection. Set the host URL and credentials (the built-in <code>remote_monitoring_collector</code> role is required on each monitored cluster).</div>
+        </div>
+      </div>
+      <div class="step">
+        <div class="step-num"></div>
+        <div class="step-body">
+          <div class="step-title">Point output to the monitoring cluster</div>
+          <div class="step-desc">In the agent policy output settings, set the Elasticsearch output to the monitoring cluster (not the production cluster).</div>
+        </div>
+      </div>
+      <div class="step">
+        <div class="step-num"></div>
+        <div class="step-body">
+          <div class="step-title">Verify data is flowing</div>
+          <div class="step-desc">
+            On the monitoring cluster, confirm data is present in these patterns before running the installer:
+            <ul style="margin:6px 0 0 16px;font-size:.85rem;color:var(--el-muted)">
+              <li><strong>Metrics:</strong> <code>.monitoring-es-*</code> <em>or</em> <code>metrics-elasticsearch.stack_monitoring.*</code></li>
+              <li><strong>Logs:</strong> <code>filebeat-*</code> <em>or</em> <code>logs-elasticsearch.*</code></li>
+            </ul>
+            Run a quick check in Dev Tools:
+          </div>
+          <pre style="margin-top:8px"><code>GET .monitoring-es-*/_count
+GET filebeat-*/_count</code></pre>
+        </div>
+      </div>
+    </div>
+    <div class="doc-links" style="margin-top:4px">
+      <a class="doc-link" href="https://www.elastic.co/docs/deploy-manage/monitor/stack-monitoring/collecting-monitoring-data-with-elastic-agent" target="_blank" rel="noopener">Elastic Agent stack monitoring</a>
+      <a class="doc-link" href="https://www.elastic.co/docs/deploy-manage/monitor/stack-monitoring" target="_blank" rel="noopener">Stack monitoring overview</a>
+      <a class="doc-link" href="https://www.elastic.co/docs/deploy-manage/monitor/stack-monitoring/elasticsearch-monitoring-self-managed" target="_blank" rel="noopener">Self-managed setup</a>
+    </div>
+  </div>
+
+  <div class="callout callout-warn">
+    ⚠️ <strong>Metricbeat alternative:</strong> If you use Metricbeat instead of Elastic Agent,
+    metrics land in <code>.monitoring-es-8-mb</code> and logs in <code>filebeat-*</code>.
+    Legacy internal collection (<code>.monitoring-es-7-*</code>) is <strong>deprecated</strong> — migrate to Elastic Agent.
+    The installer accepts any of these patterns at the datastream configuration step.
+  </div>
+
+  <!-- ── 3. LLM Connector ── -->
+  <h3>3. LLM / AI Connector <span class="chip chip-red" style="vertical-align:middle">REQUIRED</span></h3>
+  <p style="color:var(--el-muted);font-size:.9rem;margin-bottom:12px">
+    The Agent Builder needs an AI connector to make LLM calls. Configure it on the monitoring cluster's
+    Kibana before deploying the agent.
+  </p>
+
+  <div class="card" style="margin-bottom:16px">
+    <div style="font-weight:700;margin-bottom:10px">Setup steps</div>
+    <div class="steps" style="margin:0">
+      <div class="step">
+        <div class="step-num"></div>
+        <div class="step-body">
+          <div class="step-title">Open Stack Management → Connectors</div>
+          <div class="step-desc">Or use Kibana's global search and type <em>Connectors</em>.</div>
+        </div>
+      </div>
+      <div class="step">
+        <div class="step-num"></div>
+        <div class="step-body">
+          <div class="step-title">Create connector → AI Connector</div>
+          <div class="step-desc">Select your LLM provider. Supported providers:</div>
+          <table style="margin-top:8px;font-size:.85rem">
+            <thead><tr><th>Provider</th><th>Example model</th></tr></thead>
+            <tbody>
+              <tr><td>Amazon Bedrock</td><td><code>us.anthropic.claude-sonnet-4-5-20251001-v1:0</code></td></tr>
+              <tr><td>OpenAI</td><td><code>gpt-4o</code></td></tr>
+              <tr><td>Azure OpenAI</td><td>deployment name from Azure portal</td></tr>
+              <tr><td>Google Gemini</td><td><code>gemini-1.5-pro</code></td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+      <div class="step">
+        <div class="step-num"></div>
+        <div class="step-body">
+          <div class="step-title">Set Task type to <code>chat_completion</code></div>
+          <div class="step-desc">This is required for Agent Builder compatibility. Mini/small models are <strong>not supported</strong> — use a full-size model with strong function calling (Sonnet, GPT-4-class, Gemini Pro).</div>
+        </div>
+      </div>
+      <div class="step">
+        <div class="step-num"></div>
+        <div class="step-body">
+          <div class="step-title">Save and test the connector</div>
+          <div class="step-desc">Use the built-in test to confirm the LLM responds before deploying the agent.</div>
+        </div>
+      </div>
+    </div>
+    <div class="doc-links" style="margin-top:4px">
+      <a class="doc-link" href="https://www.elastic.co/docs/reference/kibana/connectors-kibana/ai-connector" target="_blank" rel="noopener">AI Connector reference</a>
+      <a class="doc-link" href="https://www.elastic.co/docs/explore-analyze/ai-features/llm-guides/connect-to-amazon-bedrock" target="_blank" rel="noopener">Connect to Amazon Bedrock</a>
+      <a class="doc-link" href="https://www.elastic.co/docs/explore-analyze/ai-features/agent-builder/models" target="_blank" rel="noopener">Agent Builder model requirements</a>
+    </div>
+  </div>
+
+  <div class="callout callout-info">
+    ℹ️ <strong>Which connector does the agent use?</strong> When you create the agent via the installer,
+    Kibana lets you select which AI connector it uses. You can change this after install in
+    Agent Builder → your agent → Settings → Model.
+  </div>
+
+  <!-- ── 4. Audit Logging ── -->
+  <h3>4. Audit Logging <span class="chip chip-yellow" style="vertical-align:middle">RECOMMENDED</span></h3>
+  <p style="color:var(--el-muted);font-size:.9rem;margin-bottom:12px">
+    Enable on the <strong>monitored clusters</strong> (not the monitoring cluster) to populate the
+    <code>audit_security_events</code> tool. Audit logs are then shipped to the monitoring cluster
+    via Elastic Agent or Filebeat. Use ignore policies to suppress high-volume noise.
+  </p>
+
+  <div class="card">
+    <div style="font-weight:700;margin-bottom:8px">elasticsearch.yml — minimal recommended config</div>
+    <pre><code>xpack.security.audit.enabled: true
+
+# Include only security-relevant events (reduces volume significantly)
+xpack.security.audit.logfile.events.include:
+  - authentication_failed
+  - anonymous_access_denied
+  - realm_authentication_failed
+  - access_denied
+  - security_config_change
+  - tampered_request
+  - run_as_denied
+
+# Suppress noisy internal Kibana operations and successful reads
+xpack.security.audit.logfile.events.ignore_filters:
+  kibana_system_ops:
+    users: ["kibana_system"]
+    indices: [".kibana*", ".monitoring-*", "metrics-*"]
+  suppress_bulk_reads:
+    actions:
+      - "indices:data/read/search*"
+      - "indices:data/read/get*"
+      - "indices:data/read/msearch*"
+
+# Include node identity in log lines (useful for multi-node clusters)
+xpack.security.audit.logfile.emit_node_name: true
+xpack.security.audit.logfile.emit_node_id: true</code></pre>
+
+    <div class="callout callout-warn" style="margin-top:12px">
+      ⚠️ <strong>Note:</strong> <code>security_config_change</code> events <strong>cannot</strong> be filtered
+      by ignore policies — they always appear when audit logging is enabled. This is by design for compliance.
+    </div>
+
+    <table style="margin-top:12px;font-size:.85rem">
+      <thead><tr><th>Event type</th><th>Volume</th><th>Description</th></tr></thead>
+      <tbody>
+        <tr><td><code>authentication_failed</code></td><td>Low</td><td>Bad credentials — keep this</td></tr>
+        <tr><td><code>access_denied</code></td><td>Medium</td><td>Privilege violations — keep this</td></tr>
+        <tr><td><code>security_config_change</code></td><td>Low</td><td>Always logged — cannot be filtered</td></tr>
+        <tr><td><code>access_granted</code></td><td><strong>Very high</strong></td><td>Exclude — every read/write generates one</td></tr>
+        <tr><td><code>authentication_success</code></td><td><strong>Very high</strong></td><td>Exclude — every login generates one</td></tr>
+        <tr><td><code>connection_granted</code></td><td>High</td><td>Exclude unless auditing network access</td></tr>
+      </tbody>
+    </table>
+
+    <div class="doc-links" style="margin-top:12px">
+      <a class="doc-link" href="https://www.elastic.co/docs/deploy-manage/security/logging-configuration/enabling-audit-logs" target="_blank" rel="noopener">Enable audit logging</a>
+      <a class="doc-link" href="https://www.elastic.co/docs/deploy-manage/security/logging-configuration/configuring-audit-logs" target="_blank" rel="noopener">Configure audit logging</a>
+      <a class="doc-link" href="https://www.elastic.co/docs/deploy-manage/security/logging-configuration/logfile-audit-events-ignore-policies" target="_blank" rel="noopener">Ignore policies</a>
+      <a class="doc-link" href="https://www.elastic.co/guide/en/elasticsearch/reference/current/audit-event-types.html" target="_blank" rel="noopener">All audit event types</a>
+    </div>
   </div>
 </section>
 

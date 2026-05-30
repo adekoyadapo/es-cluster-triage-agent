@@ -165,6 +165,15 @@ def delete_item(kb_url: str, hdr: tuple[str, str], path: str, label: str) -> Non
             warn(f"Failed to remove {label}: {exc}")
 
 
+def _mask_received() -> None:
+    try:
+        with open("/dev/tty", "w") as tty:
+            tty.write(f"  {DIM}••••••••{R}  {DIM}(received){R}\n")
+            tty.flush()
+    except OSError:
+        pass
+
+
 def build_auth_header(creds_data: dict[str, Any]) -> tuple[str, str]:
     auth_type = creds_data.get("auth_type", "apikey")
     if auth_type == "basic":
@@ -187,13 +196,15 @@ def build_auth_header(creds_data: dict[str, Any]) -> tuple[str, str]:
         try:
             username = input(f"  {c(BOLD, 'Username')} [elastic]: ").strip() or "elastic"
             password = getpass.getpass(f"  {c(BOLD, 'Password')}: ")
+            _mask_received()
         except (EOFError, KeyboardInterrupt):
             raise SystemExit(0)
         token = base64.b64encode(f"{username}:{password}".encode()).decode()
         return ("Authorization", f"Basic {token}")
     else:
         try:
-            api_key = getpass.getpass(f"  {c(BOLD, 'API Key')}: ")
+            api_key = getpass.getpass(f"  {c(BOLD, 'API Key (id:secret or encoded)')}: ")
+            _mask_received()
         except (EOFError, KeyboardInterrupt):
             raise SystemExit(0)
         if ":" in api_key:
