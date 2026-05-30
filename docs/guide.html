@@ -242,7 +242,7 @@ footer p{color:var(--el-muted);font-size:.82rem}
       </tr>
       <tr>
         <td>Auth credentials</td><td>—</td>
-        <td>One API key with <code>manage</code> + <code>read</code> + <code>view_index_metadata</code> on index patterns; <code>feature_agentBuilder.all</code>, <code>feature_actions.read</code>, <code>workflowsManagement:read/create/update/delete</code> on <code>kibana-.kibana</code>; cluster privileges <code>monitor</code> + <code>monitor_inference</code> — or superuser credentials</td>
+        <td>One API key with <code>manage</code> + <code>read</code> + <code>view_index_metadata</code> on index patterns; <code>"all"</code> on <code>kibana-.kibana</code> with <code>"resources": ["*"]</code>; cluster privileges <code>monitor</code> + <code>monitor_inference</code> — or superuser credentials</td>
         <td><a class="doc-link" href="https://www.elastic.co/docs/deploy-manage/api-keys/elasticsearch-api-keys" target="_blank" rel="noopener">API Keys</a></td>
       </tr>
       <tr>
@@ -277,15 +277,8 @@ footer p{color:var(--el-muted);font-size:.82rem}
       }],
       "applications": [{
         "application": "kibana-.kibana",
-        "privileges": [
-          "feature_agentBuilder.all",
-          "feature_actions.read",
-          "workflowsManagement:read",
-          "workflowsManagement:create",
-          "workflowsManagement:update",
-          "workflowsManagement:delete"
-        ],
-        "resources": ["space:&lt;your-namespace&gt;"]
+        "privileges": ["all"],
+        "resources": ["*"]
       }]
     }
   }
@@ -310,13 +303,14 @@ footer p{color:var(--el-muted);font-size:.82rem}
       </tr>
     </table>
     <p style="margin:10px 0 4px 0;font-size:.85rem">
-      <strong>Kibana application privileges</strong><br>
-      API keys require specific Kibana feature privilege names — not the generic <code>"all"</code> shorthand:
-      <ul style="margin:4px 0 0 16px;padding:0;font-size:.85rem">
-        <li><code>feature_agentBuilder.all</code> — deploy and use agents, tools, skills, and chat</li>
-        <li><code>feature_actions.read</code> — required when the agent uses AI connectors</li>
-        <li><code>workflowsManagement:read/create/update/delete</code> — the workflows feature exposes privileges directly by operation name (unlike Agent Builder which uses the <code>feature_*.all</code> pattern). Each must be listed explicitly.</li>
-      </ul>
+      <strong>Why <code>"all"</code> on <code>kibana-.kibana</code>?</strong><br>
+      The installer deploys across multiple Kibana features — Agent Builder, Workflows, and Actions.
+      Using <code>"privileges": ["all"]</code> with <code>"resources": ["*"]</code> grants full Kibana
+      access for the API key, which is the only reliable way to cover all required operations
+      (Agent Builder deploy, workflow create/update, connector access) without hitting 403 on
+      any individual feature. Narrower privilege names like <code>feature_agentBuilder.all</code> or
+      <code>workflowsManagement:create</code> do not reliably grant the full required access when
+      used in an ES API key's <code>applications</code> array.
     </p>
     <p style="margin:8px 0 4px 0;font-size:.85rem">
       <strong>Why <code>manage</code> on indices?</strong><br>

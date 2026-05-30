@@ -319,15 +319,8 @@ def show_api_key_guide() -> None:
   {c(DIM, '      }],')}
   {c(DIM, '      "applications": [{')}
   {c(DIM, '        "application": "kibana-.kibana",')}
-  {c(DIM, '        "privileges": [')}
-  {c(DIM, '          "feature_agentBuilder.all",')}
-  {c(DIM, '          "feature_actions.read",')}
-  {c(DIM, '          "workflowsManagement:read",')}
-  {c(DIM, '          "workflowsManagement:create",')}
-  {c(DIM, '          "workflowsManagement:update",')}
-  {c(DIM, '          "workflowsManagement:delete"')}
-  {c(DIM, '        ],')}
-  {c(DIM, '        "resources": ["space:<your-namespace>"]')}
+  {c(DIM, '        "privileges": ["all"],')}
+  {c(DIM, '        "resources": ["*"]')}
   {c(DIM, '      }]')}
   {c(DIM, '    }')}
   {c(DIM, '  }')}
@@ -342,10 +335,9 @@ def show_api_key_guide() -> None:
     If your key lacks manage, aliases are skipped and tools query the raw patterns directly
   · {c(BOLD, 'monitor_inference')} is required for the agent to use the Elasticsearch Inference
     API (ES|QL generation, agent chat, built-in tools)
-  · {c(BOLD, 'workflowsManagement:*')} privileges are Kibana route-level privilege names. If you
-    still get 403 on workflow creation despite adding these, the most reliable
-    fix is to use the {c(BOLD, 'elastic')} superuser (username + password) for installation —
-    the installer accepts username/password as well as API keys.
+  · {c(BOLD, '"all"')} on {c(BOLD, 'kibana-.kibana')} with {c(BOLD, '"resources": ["*"]')} grants full Kibana access
+    including Agent Builder, Workflows, and Actions — this is what allows the
+    installer to deploy all components without hitting 403 on specific features.
   · {c(BOLD, 'allow_restricted_indices: true')} is needed for .monitoring-es-* patterns;
     omit it if using metrics-elasticsearch.* or other non-system indices
   · Using username/password (elastic or superuser) also works — no key needed
