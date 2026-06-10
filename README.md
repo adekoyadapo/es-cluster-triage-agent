@@ -302,11 +302,42 @@ The app connects directly to Elasticsearch using credentials you configure in Cl
 
 ---
 
+## Credentials and `.env`
+
+The installer collects all credentials interactively — you do not need a `.env` file to run it.
+A `.env` file is required only when using the **MCP desktop app** (`mcp-app/`), which reads connection
+details from the environment at startup.
+
+```bash
+cp .env.example .env
+# Edit .env and fill in your values
+```
+
+| Variable | Required | Description |
+|---|---|---|
+| `KB_URL` | Yes | Kibana URL — must be `https://` for remote clusters |
+| `ES_URL` | Yes | Elasticsearch URL — must be `https://` for remote clusters |
+| `API_KEY` | Option A | Encoded API key (`id:secret` or base64 value from Dev Tools response) |
+| `ES_USERNAME` | Option B | Elasticsearch username (e.g. `elastic`) |
+| `ES_PASSWORD` | Option B | Password for `ES_USERNAME` |
+| `NAMESPACE` | No | Kibana space ID (default: `default`) |
+| `MONITORING_DS` | No | Monitoring metrics pattern (default: `.monitoring-es-*`) |
+| `LOG_DS` | No | Log and audit pattern (default: `elastic-cloud-logs-8`) |
+
+Choose **Option A** (API key) or **Option B** (username/password) — not both.
+For the required API key privileges and a minimal-scope key snippet, see [INSTALL.md](INSTALL.md#option-a--api-key-recommended).
+
+> The MCP desktop app uses a separate set of variables (`ELASTICSEARCH_URL`, `ELASTICSEARCH_API_KEY`,
+> `KIBANA_URL`, `KIBANA_API_KEY`) — see [mcp-app/.env.example](mcp-app/.env.example).
+
+---
+
 ## Reference
 
 | Resource | Link |
 |---|---|
 | Installation guide | [docs/guide.html](https://adekoyadapo.github.io/es-cluster-triage-agent/guide.html) |
+| Full install walkthrough | [INSTALL.md](INSTALL.md) |
 | Implementation reference | [install/IMPLEMENTATION.md](https://github.com/adekoyadapo/es-cluster-triage-agent/blob/main/install/IMPLEMENTATION.md) |
 | Kibana Agent Builder | [elastic.co/docs](https://www.elastic.co/docs/explore-analyze/ai-features/elastic-agent-builder) |
 | Stack Monitoring | [elastic.co/docs](https://www.elastic.co/docs/deploy-manage/monitor/stack-monitoring) |

@@ -278,6 +278,56 @@ footer p{color:var(--el-muted);font-size:.82rem}
     </tbody>
   </table>
 
+  <h3>Environment File Setup</h3>
+  <p style="color:var(--el-muted);margin-bottom:8px;font-size:.9rem">
+    The installer collects credentials interactively — a <code>.env</code> file is optional for the installer itself
+    but <strong>required</strong> for the MCP desktop app. Copy the template and fill in your values:
+  </p>
+  <p class="code-label">Copy the template</p>
+  <pre><code>cp .env.example .env</code></pre>
+
+  <p class="code-label" style="margin-top:12px">.env.example — full template</p>
+  <pre><code># ── Required ──────────────────────────────────────────────────────────────────
+KB_URL=https://your-cluster.kb.us-east-1.aws.found.io
+ES_URL=https://your-cluster.es.us-east-1.aws.found.io
+
+# ── Authentication — choose ONE option ───────────────────────────────────────
+
+# Option A: API key (recommended)
+# Paste the "encoded" field from POST /_security/api_key response
+API_KEY=
+
+# Option B: Username / password (uncomment both lines)
+# ES_USERNAME=elastic
+# ES_PASSWORD=
+
+# ── Kibana space ──────────────────────────────────────────────────────────────
+NAMESPACE=default
+
+# ── Monitoring data stream patterns ──────────────────────────────────────────
+MONITORING_DS=.monitoring-es-*   # or metrics-elasticsearch.stack_monitoring.*
+LOG_DS=elastic-cloud-logs-8      # or filebeat-*  or  logs-elasticsearch.*</code></pre>
+
+  <table style="margin-top:12px">
+    <thead><tr><th>Variable</th><th>Required</th><th>Description</th></tr></thead>
+    <tbody>
+      <tr><td><code>KB_URL</code></td><td>Yes</td><td>Kibana URL — must be <code>https://</code> for remote clusters</td></tr>
+      <tr><td><code>ES_URL</code></td><td>Yes</td><td>Elasticsearch URL — must be <code>https://</code> for remote clusters</td></tr>
+      <tr><td><code>API_KEY</code></td><td>Option A</td><td>Encoded API key value from the <code>POST /_security/api_key</code> response</td></tr>
+      <tr><td><code>ES_USERNAME</code></td><td>Option B</td><td>Elasticsearch username (e.g. <code>elastic</code>)</td></tr>
+      <tr><td><code>ES_PASSWORD</code></td><td>Option B</td><td>Password for <code>ES_USERNAME</code></td></tr>
+      <tr><td><code>NAMESPACE</code></td><td>No</td><td>Kibana space ID — default: <code>default</code></td></tr>
+      <tr><td><code>MONITORING_DS</code></td><td>No</td><td>Monitoring metrics index pattern — default: <code>.monitoring-es-*</code></td></tr>
+      <tr><td><code>LOG_DS</code></td><td>No</td><td>Log and audit index pattern — default: <code>elastic-cloud-logs-8</code></td></tr>
+    </tbody>
+  </table>
+
+  <div class="callout callout-info" style="margin-top:10px">
+    ℹ️ <strong>MCP desktop app</strong> uses separate variables (<code>ELASTICSEARCH_URL</code>,
+    <code>ELASTICSEARCH_API_KEY</code>, <code>KIBANA_URL</code>, <code>KIBANA_API_KEY</code>) —
+    see <code>mcp-app/.env.example</code> for that template.
+  </div>
+
   <h3>API Key Setup</h3>
   <p style="color:var(--el-muted);margin-bottom:8px;font-size:.9rem">
     You need <strong>one key</strong> that covers both Kibana deployment and Elasticsearch index access.
