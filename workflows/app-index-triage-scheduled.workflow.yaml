@@ -23,20 +23,20 @@ steps:
           | STATS
               docs_count = MAX(elasticsearch.index.total.docs.count),
               store_bytes = MAX(elasticsearch.index.total.store.size_in_bytes),
-              index_failed = MAX(elasticsearch.index.total.indexing.index_failed),
               index_total = MAX(elasticsearch.index.total.indexing.index_total),
+              index_time_ms = MAX(elasticsearch.index.total.indexing.index_time_in_millis),
               fielddata_memory_bytes = MAX(elasticsearch.index.total.fielddata.memory_size_in_bytes),
               segments_count = MAX(elasticsearch.index.total.segments.count)
             BY elasticsearch.cluster.name, elasticsearch.index.name
-          | WHERE index_failed > 0 OR fielddata_memory_bytes > 104857600
-          | SORT index_failed DESC, fielddata_memory_bytes DESC
+          | WHERE fielddata_memory_bytes > 104857600 OR segments_count > 50
+          | SORT segments_count DESC, fielddata_memory_bytes DESC
           | LIMIT 20
   - name: summarize
     type: ai.agent
     agent-id: "__AGENT_ID__"
     with:
       message: |
-        This is a scheduled application index health scan. Analyse the monitoring data below and identify any indices with elevated failure counts or high fielddata memory usage.
+        This is a scheduled application index health scan. Analyse the monitoring data below and identify any indices with high segment counts (>50 is concerning, >100 is critical) or high fielddata memory usage (>100MB).
 
         For each index showing problems, use the appropriate skill to investigate further.
         If all indices look healthy, confirm that clearly.

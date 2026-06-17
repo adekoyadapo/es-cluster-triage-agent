@@ -1410,6 +1410,81 @@ def deploy_optional_bundle(
         INSTALLED_FILE.chmod(0o600)
 
 
+def live_optional_agent_validation(
+    creds: dict[str, str],
+    hdr: tuple[str, str],
+    namespace: str,
+    ds_info: dict[str, str],
+) -> None:
+    """Run a log-stream probe and optional agent chat test for the app-index-triage agent."""
+    es_url = creds["ES_URL"]
+    kb_url = creds["KB_URL"]
+    log_ds = ds_info.get("log_ds", "elastic-cloud-logs-8")
+    log_alias = ds_info.get("log_alias", "elastic-cloud-logs-8")
+    log_alias_created = ds_info.get("log_alias_created", False)
+    log_target = log_alias if log_alias_created else log_ds
+
+    print(f"""
+  {c(CYAN, "Optional agent — log stream probe")}
+  Verifies that application index log events are visible in {c(BOLD, log_target)}.
+    """)
+
+    if not confirm("Run log stream probe?", True):
+        info("Skipping — verify manually via the Kibana agent URL")
+    else:
+        query = (
+            f"FROM {log_target}\n"
+            "| WHERE @timestamp >= NOW() - 1 hour\n"
+            "| WHERE event.dataset LIKE \"elasticsearch.*\"\n"
+            "| WHERE elasticsearch.index.name IS NOT NULL\n"
+            "| WHERE NOT elasticsearch.index.name LIKE \".kibana*\"\n"
+            "| WHERE NOT elasticsearch.index.name LIKE \".security*\"\n"
+            "| WHERE NOT elasticsearch.index.name LIKE \".monitoring*\"\n"
+            "| STATS log_events = COUNT(*), last_seen = MAX(@timestamp)\n"
+            "    BY elasticsearch.index.name, elasticsearch.cluster.name\n"
+            "| SORT log_events DESC\n"
+            "| LIMIT 10"
+        )
+        print(f"\n  {c(DIM, 'Querying:')} {log_target}")
+        try:
+            result = es_request(es_url, hdr, "POST", "/_query", body={"query": query}, timeout=30)
+            columns = [col.get("name", "") for col in result.get("columns", [])]
+            values = result.get("values", [])
+            if not values:
+                warn("No application index log events found in the last hour — slow-log thresholds may not be set or no writes are happening")
+            else:
+                print(f"\n  {c(GREEN + BOLD, 'Application Indices in Log Stream (last 1 hour):')} \n")
+                for row in values:
+                    rm = dict(zip(columns, row))
+                    idx = str(rm.get("elasticsearch.index.name", "—"))[:40]
+                    evts = str(rm.get("log_events", "—"))
+                    print(f"    {idx:<42}  {evts} events")
+                print()
+                ok(f"Log stream validated — {len(values)} application index(es) found")
+        except RuntimeError as exc:
+            warn(f"Log stream probe failed: {exc}")
+
+    # ── Agent chat test ───────────────────────────────────────────────────────
+    print(f"""
+  {c(CYAN, "Optional agent — chat test")}
+  Sends a question to the Application Index Triage agent and streams the reply.
+  The agent will call ES|QL discovery and triage tools in real time.
+    """)
+
+    if confirm("Run agent chat test?", True):
+        sample_q = "Discover any application indices active in the logs over the last 2 hours and give me a brief health summary for each one."
+        print(f"\n  {c(BOLD, 'Question:')} {sample_q}")
+        print(f"  {c(DIM, '─' * 58)}")
+        success = stream_agent_chat(kb_url, hdr, namespace, "app-index-triage-agent", sample_q)
+        if success:
+            print(f"  {c(DIM, '─' * 58)}")
+            ok("Agent responded — optional agent validation complete")
+        else:
+            info("Agent chat did not return a response — verify via the Kibana UI")
+    else:
+        info("Skipping agent chat test")
+
+
 def offer_optional_agents(
     creds: dict[str, str],
     hdr: tuple[str, str],
@@ -1446,6 +1521,9 @@ def offer_optional_agents(
     except RuntimeError as exc:
         warn(f"Optional agent deployment failed: {exc}")
         info("The main agent is unaffected. Run the installer again to retry the optional agent.")
+        return
+
+    live_optional_agent_validation(creds, hdr, namespace, ds_info)
 
 
 # ── Optional: MCP app ──────────────────────────────────────────────────────────
