@@ -128,6 +128,14 @@ LOG_DS=elastic-cloud-logs-8
 python3 install/install.py
 ```
 
+To deploy or re-deploy the optional Application Index Triage Agent without re-running the full install, use the `--optional-only` flag. It loads saved credentials and datastream settings from the previous run:
+
+```bash
+python3 install/install.py --optional-only
+# short form:
+python3 install/install.py -o
+```
+
 The installer walks through 10 interactive steps:
 
 | Step | What happens |

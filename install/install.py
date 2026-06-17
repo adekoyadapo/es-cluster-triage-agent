@@ -1485,13 +1485,92 @@ def offer_mcp_app() -> None:
 
 
 # ── Main ───────────────────────────────────────────────────────────────────────
+def _load_session_from_creds_file() -> tuple[dict[str, str], tuple[str, str], str, dict[str, str], dict[str, Any]]:
+    """Load all context needed for --optional-only from the saved credentials and install files."""
+    if not CREDS_FILE.exists():
+        raise RuntimeError(
+            f"No saved credentials found at {CREDS_FILE}.\n"
+            "  Run the full installer first: python3 install/install.py"
+        )
+    if not INSTALLED_FILE.exists():
+        raise RuntimeError(
+            f"No install manifest found at {INSTALLED_FILE}.\n"
+            "  Run the full installer first: python3 install/install.py"
+        )
+
+    creds_data = json.loads(CREDS_FILE.read_text())
+    installed = json.loads(INSTALLED_FILE.read_text())
+
+    # Reconstruct creds dict in the shape collect_credentials() returns
+    creds: dict[str, str] = {
+        "KB_URL": creds_data.get("kb_url", ""),
+        "ES_URL": creds_data.get("es_url", ""),
+        "AUTH_TYPE": creds_data.get("auth_type", "apikey"),
+    }
+    if not creds["KB_URL"]:
+        raise RuntimeError("Kibana URL missing from saved credentials file.")
+
+    # Re-prompt for the secret — it is never persisted to disk
+    auth_type = creds["AUTH_TYPE"]
+    print(f"\n  {c(CYAN, 'Re-enter credentials')} {c(DIM, '(never stored on disk)')}")
+    if auth_type == "basic":
+        creds["ES_USERNAME"] = ask("Elasticsearch username", "elastic")
+        creds["ES_PASSWORD"] = ask_secret("Elasticsearch password")
+    else:
+        creds["API_KEY"] = ask_secret("API Key (id:secret or encoded)")
+
+    hdr = build_auth_header(creds)
+
+    # Reconstruct ds_info from saved data
+    ds_info: dict[str, str] = {
+        "monitoring_ds": creds_data.get("monitoring_ds", ".monitoring-es-*"),
+        "log_ds": creds_data.get("log_ds", "elastic-cloud-logs-8"),
+        "monitoring_alias": creds_data.get("monitoring_alias", "es-monitoring"),
+        "log_alias": creds_data.get("log_alias", "elastic-cloud-logs-8"),
+        "monitoring_alias_created": False,
+        "log_alias_created": False,
+    }
+
+    namespace: str = creds_data.get("namespace", installed.get("namespace", "default"))
+
+    return creds, hdr, namespace, ds_info, installed
+
+
 def main() -> int:
     open_log()
-    print_banner()
 
+    # ── --optional-only / -o flag: skip straight to step 10 ──────────────────
+    optional_only = "--optional-only" in sys.argv or "-o" in sys.argv
+    if optional_only:
+        print_banner()
+        print(c(CYAN + BOLD, "  Mode: Deploy optional agents only (--optional-only)"))
+        print(c(DIM, f"  Loading saved session from {CREDS_FILE}"))
+        print(c(DIM, f"  Install log: {LOG_FILE}"))
+        try:
+            creds, hdr, namespace, ds_info, installed = _load_session_from_creds_file()
+            validate_auth(creds, hdr)
+            offer_optional_agents(creds, hdr, namespace, ds_info, installed)
+        except SystemExit:
+            raise
+        except KeyboardInterrupt:
+            print(f"\n\n  {c(YELLOW, 'Interrupted.')}")
+            return 1
+        except RuntimeError as exc:
+            print(f"\n\n  {c(RED + BOLD, 'Failed:')}")
+            print(f"  {c(RED, str(exc))}")
+            print(f"  {c(DIM, f'See log: {LOG_FILE}')}")
+            log(f"FATAL: {exc}")
+            return 1
+        finally:
+            close_log()
+        return 0
+
+    # ── Full install ──────────────────────────────────────────────────────────
+    print_banner()
     print(c(DIM, "  Deploys the Elasticsearch Cluster Triage Agent into any Kibana space."))
     print(c(DIM, "  Credentials are stored locally and never displayed."))
     print(c(DIM, f"  Install log: {LOG_FILE}"))
+    print(c(DIM, f"  Tip: python3 install/install.py --optional-only  (re-run step 10 only)"))
 
     if not confirm("\nReady to begin?", True):
         print("  Aborted.")
