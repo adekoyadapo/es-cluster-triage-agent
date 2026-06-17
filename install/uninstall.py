@@ -256,10 +256,11 @@ def main() -> int:
     print(f"  {c(CYAN, 'Installed at:')} {installed.get('installed_at', 'unknown')}")
     print(f"  {c(CYAN, 'Kibana space:')} {namespace}")
     print(f"  {c(CYAN, 'Kibana URL:')}   {kb_url}")
+
+    # ── Main bundle summary ───────────────────────────────────────────────────
     print()
-    print(f"  Will remove:")
-    print(f"  · {len(tool_ids)} tools")
-    print(f"  · {len(skill_ids)} skills")
+    print(f"  {c(BOLD, 'Main bundle (ES Cluster Triage Agent):')}")
+    print(f"  · {len(tool_ids)} tools, {len(skill_ids)} skills")
     print(f"  · Agent: {agent_id}")
     for wid in workflow_ids:
         print(f"  · Workflow: {wid}")
@@ -269,14 +270,32 @@ def main() -> int:
         print(f"  · ES alias: {monitoring_alias}")
     if log_alias and log_alias != "elastic-cloud-logs-8":
         print(f"  · ES alias: {log_alias}")
-    if optional_tool_ids or optional_skill_ids or optional_agent_ids:
-        print(f"  · Optional agent: {', '.join(optional_agent_ids) or 'none'} ({len(optional_tool_ids)} tools, {len(optional_skill_ids)} skills)")
-    for wid in optional_workflow_ids:
-        print(f"  · Optional workflow: {wid}")
 
-    if not confirm("Proceed with uninstall?", False):
+    # ── Optional bundle summary ───────────────────────────────────────────────
+    has_optional = bool(optional_tool_ids or optional_skill_ids or optional_agent_ids)
+    if has_optional:
+        print()
+        print(f"  {c(BOLD, 'Optional bundle (Application Index Triage Agent):')}")
+        print(f"  · {len(optional_tool_ids)} tools, {len(optional_skill_ids)} skills")
+        for oid in optional_agent_ids:
+            print(f"  · Agent: {oid}")
+        for wid in optional_workflow_ids:
+            print(f"  · Workflow: {wid}")
+    else:
+        print()
+        info("Optional agent not installed — nothing to remove for that bundle")
+
+    # ── Confirmations ─────────────────────────────────────────────────────────
+    print()
+    if not confirm("Remove main cluster triage agent bundle?", False):
         print("  Aborted.")
         return 0
+
+    remove_optional = False
+    if has_optional:
+        remove_optional = confirm(
+            "Remove optional Application Index Triage Agent bundle?", False
+        )
 
     # Build auth header
     creds_data: dict[str, Any] = {}
@@ -291,22 +310,30 @@ def main() -> int:
     print()
     print(c(BOLD, "  Removing deployment..."))
 
-    # Workflows first (main + optional)
-    for wid in workflow_ids + optional_workflow_ids:
-        delete_item(kb_url, hdr, space_path(namespace, f"/api/workflows/workflow/{wid}"), f"workflow/{wid}")
+    # ── Optional bundle (remove first — depends on nothing) ───────────────────
+    if remove_optional:
+        print(f"\n  {c(DIM, '── Optional bundle ──────────────────────────────')}")
+        for wid in optional_workflow_ids:
+            delete_item(kb_url, hdr, space_path(namespace, f"/api/workflows/workflow/{wid}"), f"workflow/{wid}")
+        for oid in optional_agent_ids:
+            delete_item(kb_url, hdr, space_path(namespace, f"/api/agent_builder/agents/{oid}"), f"agent/{oid}")
+        for skill_id in optional_skill_ids:
+            delete_item(kb_url, hdr, space_path(namespace, f"/api/agent_builder/skills/{skill_id}"), f"skill/{skill_id}")
+        for tool_id in optional_tool_ids:
+            delete_item(kb_url, hdr, space_path(namespace, f"/api/agent_builder/tools/{tool_id}"), f"tool/{tool_id}")
+        ok("Optional bundle removed")
+    elif has_optional:
+        info("Skipping optional bundle — keeping Application Index Triage Agent")
 
-    # Agents (depends on skills/tools)
-    for oid in optional_agent_ids:
-        delete_item(kb_url, hdr, space_path(namespace, f"/api/agent_builder/agents/{oid}"), f"agent/{oid}")
+    # ── Main bundle ───────────────────────────────────────────────────────────
+    print(f"\n  {c(DIM, '── Main bundle ──────────────────────────────────')}")
+    for wid in workflow_ids:
+        delete_item(kb_url, hdr, space_path(namespace, f"/api/workflows/workflow/{wid}"), f"workflow/{wid}")
     if agent_id:
         delete_item(kb_url, hdr, space_path(namespace, f"/api/agent_builder/agents/{agent_id}"), f"agent/{agent_id}")
-
-    # Skills (optional first, then main)
-    for skill_id in optional_skill_ids + skill_ids:
+    for skill_id in skill_ids:
         delete_item(kb_url, hdr, space_path(namespace, f"/api/agent_builder/skills/{skill_id}"), f"skill/{skill_id}")
-
-    # Tools (optional first, then main)
-    for tool_id in optional_tool_ids + tool_ids:
+    for tool_id in tool_ids:
         delete_item(kb_url, hdr, space_path(namespace, f"/api/agent_builder/tools/{tool_id}"), f"tool/{tool_id}")
 
     # Connector
@@ -337,12 +364,18 @@ def main() -> int:
                 f.unlink()
                 ok(f"Removed {f.name}")
 
+    removed_optional_note = (
+        "\n  · Optional Application Index Triage Agent also removed"
+        if remove_optional else (
+            f"\n  · {c(DIM, 'Optional Application Index Triage Agent was kept (not removed)')}"
+            if has_optional else ""
+        )
+    )
     print(f"""
   {c(GREEN + BOLD, '✓ Uninstall complete')}
 
-  The Elasticsearch Cluster Triage Agent has been removed from:
-  · Space: {namespace}
-  · Kibana: {kb_url}
+  Removed from space '{namespace}' at {kb_url}:
+  · ES Cluster Triage Agent (main bundle){removed_optional_note}
 
   Source files in kibana-agent-builder/ and workflows/ were NOT removed.
   Run install.py to redeploy at any time.
