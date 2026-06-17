@@ -53,7 +53,7 @@ cd es-cluster-triage-agent
 python3 install/install.py
 ```
 
-The installer walks you through 9 steps:
+The installer walks you through 10 steps:
 
 1. **Prerequisite check** — verifies Python version and bundle files
 2. **Connection details** — Kibana URL, Elasticsearch URL, authentication
@@ -63,7 +63,8 @@ The installer walks you through 9 steps:
 6. **Deployment** — tools → skills → agent → workflow, with a live progress bar
 7. **Workflow setup** — choose alert-triggered, scheduled (with interval), both, or agent-only
 8. **Verification** — confirms every deployed component is reachable
-9. **Live validation** — runs a `cluster_health_summary` ES|QL query and displays results
+9. **Live validation** — runs a `cluster_health_summary` ES|QL query and streams a test question to the agent
+10. **Optional agents** — offers to deploy the Application Index Triage Agent (use `--optional-only` / `-o` to re-deploy later without re-running the full install)
 
 Credentials are **never** displayed in the terminal. A local install manifest is saved for clean uninstall.
 
@@ -153,17 +154,24 @@ A second agent persona (`app-index-triage-agent`) can be deployed after the main
 
 It focuses on **per-index** problems on application data streams. It reuses the same monitoring and log datastreams configured for the main agent and requires no additional credentials or patterns.
 
-### 5 skills, 14 tools
+### 5 skills, 16 tools (including 2 discovery tools for standard indices and data streams)
 
 | Skill | Focus |
 |---|---|
 | Index Health & Allocation | Unassigned shards (NODE_LEFT, NO_VALID_SHARD_COPY, ALLOCATION_FAILED), recovery stalls |
 | Mapping & Schema | `mapper_parsing_exception`, total-fields limit, fielddata memory growth, dynamic mapping abuse |
 | Lifecycle & Rollover | ILM step errors, rollover failures, broken write aliases, DSL errors |
-| Ingestion Performance & Slow Ops | Bulk rejections, `index_failed` counts, slow-log p95/p99, circuit-breaker trips |
+| Ingestion Performance & Slow Ops | Bulk rejections, server-log ERROR/WARN spikes, slow-log entries, circuit-breaker trips |
 | Audit & Deprecations | `access_denied` spikes, admin actions (create/delete/put_mapping), deprecation warnings |
 
-Built-in `observability.investigation` is also assigned for service-level questions tied to the index.
+Two discovery tools help scope which index or data stream to investigate:
+
+- `app-index-triage-active-log-indices` — finds standard indices with recent `elasticsearch.*` log events (log-based)
+- `app-index-triage-active-ds-indices` — groups `.ds-*` backing indices back to their parent data stream name (monitoring-based)
+
+Built-in `observability.investigation` is also assigned and triggered proactively on performance degradation (not only on errors).
+
+**Data stream support:** backing indices are named `.ds-<name>-YYYY.MM.DD-NNNNNN`. Use a wildcard pattern — e.g. `*lab-activity-ds*` — to match all backing indices in monitoring and log queries. `platform.core.get_index_mapping` is NOT used; Kibana is connected to the monitoring cluster, not the monitored application cluster, so all analysis is log and monitoring based.
 
 **Routing:** every tool requires an `index_pattern` parameter. The agent asks for it once if not provided in the prompt. Log events are filtered by `event.dataset` inside the user-configured log pattern, so it works with Filebeat, Elastic Agent, `elastic-cloud-logs-8`, or any other shipper that preserves ECS.
 
@@ -244,16 +252,21 @@ The interval is set interactively during install. Results appear in the Kibana W
 es-cluster-triage-agent/
 │
 ├── install/
-│   ├── install.py              # Interactive 9-step installer (Python 3.8+, stdlib only)
+│   ├── install.py              # Interactive 10-step installer (Python 3.8+, stdlib only)
 │   ├── uninstall.py            # Removes only what install.py created
 │   ├── verify.py               # Health-checks a live deployment
 │   └── IMPLEMENTATION.md       # Full API reference and deployment notes
 │
 ├── kibana-agent-builder/
-│   └── es-cluster-triage/
-│       ├── manifest.json       # Bundle descriptor (tool_files, skill_files, agent path)
-│       ├── agent.json          # Agent definition with instructions and skill routing
-│       ├── tools/              # 19 ES|QL tool JSON definitions
+│   ├── es-cluster-triage/
+│   │   ├── manifest.json       # Bundle descriptor (tool_files, skill_files, agent path)
+│   │   ├── agent.json          # Agent definition with instructions and skill routing
+│   │   ├── tools/              # 19 ES|QL tool JSON definitions
+│   │   └── skills/             # 5 skill group JSON definitions
+│   └── app-index-triage/
+│       ├── manifest.json       # Bundle descriptor for optional per-index triage agent
+│       ├── agent.json          # Agent definition with per-index instructions and skill routing
+│       ├── tools/              # 16 ES|QL tool JSON definitions (14 diagnostic + 2 discovery)
 │       └── skills/             # 5 skill group JSON definitions
 │
 ├── workflows/
@@ -285,6 +298,9 @@ es-cluster-triage-agent/
 # Deploy (interactive)
 python3 install/install.py
 
+# Re-deploy optional agent only (skips steps 1–9)
+python3 install/install.py --optional-only
+
 # Check a live deployment
 python3 install/verify.py
 
@@ -292,7 +308,7 @@ python3 install/verify.py
 python3 install/uninstall.py
 ```
 
-The uninstaller reads `install/.installed.json` and removes only the components it created — tools, skills, agent, workflows, connector (if any), and the ES alias. Source files and the Kibana space itself are not touched.
+The uninstaller reads `install/.installed.json` and removes only the components it created — tools, skills, agent, workflows, connector (if any), and the ES alias. Source files and the Kibana space itself are not touched. The uninstaller asks **separately** whether to remove the main cluster triage agent bundle and whether to remove the optional Application Index Triage Agent bundle (the optional prompt is only shown if the optional agent was installed).
 
 ---
 

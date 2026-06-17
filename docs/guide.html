@@ -160,6 +160,7 @@ footer p{color:var(--el-muted);font-size:.82rem}
     <a href="#setup">Setup Guide</a>
     <a href="#install">Install</a>
     <a href="#tools">Tools</a>
+    <a href="#optional-agent">Optional Agent</a>
     <a href="#workflow">Workflow</a>
     <a href="#mcp">MCP App</a>
   </div>
@@ -172,7 +173,7 @@ footer p{color:var(--el-muted);font-size:.82rem}
   <h1>Elasticsearch Cluster<br/><span>Triage Agent</span></h1>
   <p class="sub">
     Deploy AI-powered triage into any Kibana space in minutes.
-    19 ES|QL tools · 5 skill groups · alert and scheduled workflows.
+    19 ES|QL tools · 5 skill groups · optional per-index triage agent · alert and scheduled workflows.
   </p>
   <div class="hero-btns">
     <a href="#install" class="btn">Get Started →</a>
@@ -216,6 +217,11 @@ footer p{color:var(--el-muted);font-size:.82rem}
       <div class="card-icon">🤖</div>
       <div class="card-title">Automated Workflow</div>
       <div class="card-desc">Alert or scheduled trigger → ES|QL query → AI triage report, reviewed in workflow execution history.</div>
+    </div>
+    <div class="card-sm">
+      <div class="card-icon">🔎</div>
+      <div class="card-title">Optional: Index Triage Agent</div>
+      <div class="card-desc">Per-index deep dive — mapping issues, ILM stalls, slow ops, audit events, and data stream support</div>
     </div>
   </div>
 </section>
@@ -875,6 +881,18 @@ spec:
     <div class="step">
       <div class="step-num"></div>
       <div class="step-body">
+        <div class="step-title">Workflow Setup</div>
+        <div class="step-desc">
+          Choose alert-triggered, scheduled, both, or agent-only. The interval is set interactively for scheduled workflows.
+        </div>
+        <div class="doc-links">
+          <a class="doc-link" href="https://www.elastic.co/docs/explore-analyze/workflows" target="_blank" rel="noopener">Kibana Workflows</a>
+        </div>
+      </div>
+    </div>
+    <div class="step">
+      <div class="step-num"></div>
+      <div class="step-body">
         <div class="step-title">Verification</div>
         <div class="step-desc">
           Confirms each component is reachable in Kibana. Reports missing items with specific guidance.
@@ -887,10 +905,18 @@ spec:
     <div class="step">
       <div class="step-num"></div>
       <div class="step-body">
-        <div class="step-title">Summary</div>
+        <div class="step-title">Live Validation</div>
         <div class="step-desc">
-          Shows a clean summary with the Kibana URL, what was deployed, and next steps.
-          Optionally builds the MCP desktop app.
+          Runs a live <code>cluster_health_summary</code> ES|QL query against your monitoring stream and streams a test question to the agent.
+        </div>
+      </div>
+    </div>
+    <div class="step">
+      <div class="step-num"></div>
+      <div class="step-body">
+        <div class="step-title">Optional Agent</div>
+        <div class="step-desc">
+          Offers to deploy the Application Index Triage Agent. Uses the same datastreams as the main agent. After deployment, runs a log-stream probe and agent chat test for the optional agent.
         </div>
       </div>
     </div>
@@ -904,6 +930,9 @@ spec:
     <pre><code>python3 install/verify.py</code></pre>
     <p class="code-label" style="margin-top:12px">Remove everything the installer created</p>
     <pre><code>python3 install/uninstall.py</code></pre>
+    <p style="color:var(--el-muted);font-size:.83rem;margin-top:4px">The uninstaller asks separately whether to remove the optional Application Index Triage Agent bundle.</p>
+    <p class="code-label" style="margin-top:12px">Re-deploy optional agent only</p>
+    <pre><code>python3 install/install.py --optional-only</code></pre>
   </div>
 
   <div class="callout callout-warn">
@@ -916,7 +945,7 @@ spec:
 <!-- ── Tools ─────────────────────────────────────────────────────────────────── -->
 <section id="tools">
   <h2>Tool <span>Reference</span></h2>
-  <p class="section-sub">19 ES|QL tools across 5 skill groups. All query <code>.monitoring-es-*</code> via the alias.</p>
+  <p class="section-sub">19 ES|QL tools across 5 skill groups for the main cluster triage agent. See the <a href="#optional-agent" style="color:var(--el-teal)">Optional Agent</a> section for the 16-tool per-index triage bundle.</p>
   <div class="doc-links" style="margin-bottom:24px">
     <a class="doc-link" href="https://www.elastic.co/docs/reference/query-languages/esql" target="_blank" rel="noopener">ES|QL reference</a>
     <a class="doc-link" href="https://www.elastic.co/docs/deploy-manage/monitor/stack-monitoring" target="_blank" rel="noopener">Stack Monitoring data</a>
@@ -975,6 +1004,54 @@ spec:
       <tr><td>Auth errors, access denied, 5xx log spike</td><td>Logs & Security</td><td>Cluster Health if node-related</td></tr>
     </tbody>
   </table>
+</section>
+
+<!-- ── Optional Agent ────────────────────────────────────────────────────────── -->
+<section id="optional-agent">
+  <h2>Optional: <span>Application Index Triage Agent</span></h2>
+  <p class="section-sub">A second agent persona for per-index deep-dive triage. Deployed at installer step 10 — no additional credentials or datastreams required.</p>
+
+  <div class="callout callout-info">
+    ℹ️ The optional agent reuses the monitoring and log datastreams configured for the main agent.
+    Kibana is connected to the <strong>monitoring cluster</strong>, not the monitored application cluster —
+    all analysis is log and monitoring based.
+  </div>
+
+  <!-- 5 skills table -->
+  <h3>5 Skills · 16 ES|QL Tools</h3>
+  <table>
+    <thead><tr><th>Skill</th><th>Investigates</th><th>Tools</th></tr></thead>
+    <tbody>
+      <tr><td><strong>Index Health &amp; Allocation</strong></td><td>Unassigned shards (NODE_LEFT, ALLOCATION_FAILED), recovery stalls, shard-limit blocks</td><td>index_status_summary · index_unassigned_events · index_recovery_events</td></tr>
+      <tr><td><strong>Mapping &amp; Schema</strong></td><td>mapper_parsing_exception, total-fields limit, fielddata memory growth, dynamic mapping</td><td>mapping_error_log · index_field_count_trend</td></tr>
+      <tr><td><strong>Lifecycle &amp; Rollover</strong></td><td>ILM step errors, rollover failures, broken write aliases, DSL errors</td><td>ilm_step_errors · rollover_failure_log · index_status_summary</td></tr>
+      <tr><td><strong>Ingestion Perf &amp; Slow Ops</strong></td><td>Bulk rejections, server-log ERROR/WARN spikes, slow-log entries, circuit-breaker trips</td><td>index_indexing_failures · index_write_rejections · slow_index_log · circuit_breaker_trips</td></tr>
+      <tr><td><strong>Audit &amp; Deprecations</strong></td><td>access_denied spikes, admin actions (create/delete/put_mapping), deprecation warnings</td><td>index_audit_access_denied · index_admin_actions · index_deprecation_warnings</td></tr>
+    </tbody>
+  </table>
+
+  <h3>Discovery Tools</h3>
+  <table>
+    <thead><tr><th>Tool</th><th>Source</th><th>Use when</th></tr></thead>
+    <tbody>
+      <tr><td><code>active-log-indices</code></td><td>Log stream</td><td>Standard indices — finds indices with recent elasticsearch.* log events</td></tr>
+      <tr><td><code>active-ds-indices</code></td><td>Monitoring stream</td><td>Data streams — groups .ds-* backing indices back to parent stream name</td></tr>
+    </tbody>
+  </table>
+
+  <div class="callout" style="margin-top:16px">
+    💡 <strong>Data stream tip:</strong> Backing indices are named <code>.ds-&lt;name&gt;-YYYY.MM.DD-NNNNNN</code>.
+    When asking the agent to investigate a data stream, use a wildcard pattern — e.g. ask about
+    <code>*lab-activity-ds*</code> rather than <code>lab-activity-ds</code> to match all backing indices in
+    monitoring and log queries.
+  </div>
+
+  <h3>Deploy / Redeploy</h3>
+  <pre><code># Deploy for the first time (answer Yes at step 10):
+python3 install/install.py
+
+# Redeploy optional agent only (skips steps 1–9):
+python3 install/install.py --optional-only</code></pre>
 </section>
 
 <!-- ── Workflow ───────────────────────────────────────────────────────────────── -->

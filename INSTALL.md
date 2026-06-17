@@ -199,6 +199,8 @@ python3 install/uninstall.py
 Reads `install/.installed.json` and removes only what the installer created — tools, skills, agent,
 workflows, connector (if any), and the monitoring alias. The Kibana space and source files are not touched.
 
+The uninstaller asks **separately** whether to remove the main cluster triage agent bundle and whether to remove the optional Application Index Triage Agent bundle. The optional prompt is only shown if the optional agent was installed.
+
 ---
 
 ## Troubleshooting
@@ -211,6 +213,7 @@ workflows, connector (if any), and the monitoring alias. The Kibana space and so
 | `API key not found` | Wrong encoded value pasted | Copy the `encoded` field from the `POST /_security/api_key` response, not `id` or `api_key` |
 | `Set KIBANA_URL` fatal error | `KB_URL` not set in environment | The installer prompts for this interactively — the `.env` file is only needed for the MCP app |
 | `Agent chat did not return a response` | No LLM connector configured on the agent | Open Agent Builder → your agent → Settings → Model and assign a connector |
+| Optional agent not visible in Agent Builder | Not yet deployed | Run `python3 install/install.py --optional-only` to deploy it without re-running the full install |
 
 ---
 
