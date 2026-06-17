@@ -1,0 +1,28 @@
+{
+  "configuration": {
+    "params": {
+      "cluster_name": {
+        "description": "Optional cluster name filter; use an empty string to query all clusters.",
+        "type": "string"
+      },
+      "index_pattern": {
+        "description": "Index or data stream pattern to investigate (e.g. logs-app.payments-*, .ds-metrics-k8s-*). Required.",
+        "type": "string"
+      },
+      "lookback": {
+        "description": "Lookback window as ES|QL time span text (e.g. 15 minutes, 1 hour, 24 hours).",
+        "type": "string"
+      }
+    },
+    "query": "FROM elastic-cloud-logs-8\n| WHERE @timestamp >= NOW() - TO_TIMEDURATION(?lookback)\n| WHERE event.dataset == \"elasticsearch.server\"\n| WHERE (log.logger LIKE \"*IndexLifecycleRunner*\" OR log.logger LIKE \"*ILMHistoryStore*\" OR message LIKE \"*ILM*error*\" OR message LIKE \"*lifecycle*failed*\" OR message LIKE \"*policy*stuck*\" OR message LIKE \"*step_info*\")\n| WHERE elasticsearch.index.name LIKE ?index_pattern\n| WHERE (?cluster_name == \"\" OR elasticsearch.cluster.name == ?cluster_name)\n| KEEP @timestamp, elasticsearch.cluster.name, elasticsearch.index.name, log.level, message\n| SORT @timestamp DESC\n| LIMIT 50"
+  },
+  "description": "Find ILM step errors, stuck-phase log entries, and lifecycle runner errors for the target index from the server log.",
+  "id": "app-index-triage-ilm_step_errors",
+  "tags": [
+    "app-index-triage",
+    "application",
+    "observability",
+    "stack-monitoring"
+  ],
+  "type": "esql"
+}

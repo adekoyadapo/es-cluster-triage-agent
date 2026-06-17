@@ -1,0 +1,11 @@
+{
+  "content": "# Application Index Mapping and Schema\n\nUse this skill when the target index has mapping or schema problems:\n\n- `mapper_parsing_exception` errors on ingest\n- `total fields limit exceeded` — the index has hit `index.mapping.total_fields.limit` (default 1000)\n- Dynamic mapping is creating an uncontrolled number of fields\n- Field-data memory or segment memory is growing sharply\n- An unexpected mapping change (put_mapping) was made to the index\n\n## Workflow\n\n1. Use `app-index-triage-mapping_error_log` to find mapper errors and total-fields warnings in the server log.\n2. Use `app-index-triage-index_field_count_trend` to see if fielddata memory and segment counts are trending upward — proxy for field-count explosion.\n3. Use `platform.core.get_index_mapping` for a live snapshot of the current mapping — compare field count to the default limit (1000 total fields).\n4. If a mapping change was suspected, cross-reference with `app-index-triage-index_admin_actions` (in the audit skill) for recent `put_mapping` events.\n\n## Output guidance\n\n- Quantify the field count if the live mapping is available.\n- Report fielddata memory trend (growing / stable / empty).\n- Identify the error type and how frequently it is occurring.\n- Note whether dynamic mapping is `true`, `runtime`, or `strict` from the live mapping — `true` is the most likely culprit for explosion.\n",
+  "description": "Investigate mapping explosion, mapper_parsing_exception, dynamic mapping abuse, and field-count growth for the target index.",
+  "id": "application.index.mapping-schema",
+  "name": "Application Index Mapping and Schema",
+  "tool_ids": [
+    "app-index-triage-mapping_error_log",
+    "app-index-triage-index_field_count_trend",
+    "platform.core.get_index_mapping"
+  ]
+}

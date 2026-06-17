@@ -1,0 +1,63 @@
+name: Application Index Triage Summary
+description: Triggers index-level triage when a Kibana alert fires. Queries the monitoring stream for the affected index and passes evidence to the Application Index Triage Agent.
+enabled: true
+tags: ["observability", "stack-monitoring", "application", "app-index-triage"]
+consts:
+  default_metrics_pattern: "__METRICS_PATTERN__"
+triggers:
+  - type: alert
+steps:
+  - name: index_metrics_summary
+    type: elasticsearch.request
+    with:
+      method: POST
+      path: /_query
+      body:
+        query: |
+          FROM {{ event.metrics_index | default: event.index_pattern | default: consts.default_metrics_pattern }}
+          | WHERE @timestamp >= NOW() - 1 hour
+          | WHERE metricset.name == "index"
+          | WHERE elasticsearch.index.name IS NOT NULL
+          | WHERE ("{{ event.index_name }}" == "" OR elasticsearch.index.name LIKE "{{ event.index_name }}")
+          | WHERE ("{{ event.cluster_name }}" == "" OR elasticsearch.cluster.name == "{{ event.cluster_name }}")
+          | STATS
+              docs_count = MAX(elasticsearch.index.total.docs.count),
+              store_bytes = MAX(elasticsearch.index.total.store.size_in_bytes),
+              index_failed = MAX(elasticsearch.index.total.indexing.index_failed),
+              index_total = MAX(elasticsearch.index.total.indexing.index_total),
+              fielddata_memory_bytes = MAX(elasticsearch.index.total.fielddata.memory_size_in_bytes),
+              segments_count = MAX(elasticsearch.index.total.segments.count)
+            BY elasticsearch.cluster.name, elasticsearch.index.name
+          | SORT index_failed DESC, store_bytes DESC
+          | LIMIT 20
+  - name: summarize
+    type: ai.agent
+    agent-id: "__AGENT_ID__"
+    with:
+      message: |
+        Triage the Elasticsearch index issue using the workflow-collected evidence below.
+
+        The workflow already queried the monitoring stream for the affected index. Your job is to interpret the evidence and return a concise index-level triage report.
+        Use the appropriate skill for the symptom described in the alert.
+        Do not mention raw query text or tool names.
+        Focus on the most likely issue at the index level, what the evidence shows, and what should be checked next.
+
+        Return a Markdown report with these sections only:
+        Index
+        Summary
+        Most likely issue
+        Evidence
+        Impacted scope (index / shard / node)
+        Time window
+        Recommended next checks
+        Confidence level
+
+        Alert metadata:
+        - alert_name: {{ event.name }}
+        - alert_reason: {{ event.reason }}
+        - cluster_name: {{ event.cluster_name }}
+        - index_name: {{ event.index_name }}
+        - metrics_index: {{ event.metrics_index | default: event.index_pattern | default: consts.default_metrics_pattern }}
+
+        Index metrics evidence:
+        {{ steps.index_metrics_summary.output | json }}

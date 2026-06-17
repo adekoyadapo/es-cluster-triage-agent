@@ -1,0 +1,28 @@
+{
+  "configuration": {
+    "params": {
+      "cluster_name": {
+        "description": "Optional cluster name filter; use an empty string to query all clusters.",
+        "type": "string"
+      },
+      "index_pattern": {
+        "description": "Index or data stream pattern to investigate (e.g. logs-app.payments-*, .ds-metrics-k8s-*). Required.",
+        "type": "string"
+      },
+      "lookback": {
+        "description": "Lookback window as ES|QL time span text (e.g. 15 minutes, 1 hour, 24 hours).",
+        "type": "string"
+      }
+    },
+    "query": "FROM elastic-cloud-logs-8\n| WHERE @timestamp >= NOW() - TO_TIMEDURATION(?lookback)\n| WHERE event.dataset LIKE \"elasticsearch.audit*\"\n| WHERE event.action IN (\"create_index\", \"delete_index\", \"put_mapping\", \"update_settings\", \"add_alias\", \"remove_alias\", \"indices:admin/create\", \"indices:admin/delete\", \"indices:admin/mapping/put\", \"indices:admin/settings/update\", \"indices:admin/aliases\")\n| WHERE TO_STRING(indices) LIKE ?index_pattern\n| WHERE (?cluster_name == \"\" OR elasticsearch.cluster.name == ?cluster_name)\n| KEEP @timestamp, elasticsearch.cluster.name, event.action, user.name, user.roles, indices, source.ip\n| SORT @timestamp DESC\n| LIMIT 50"
+  },
+  "description": "Show sensitive administrative audit events (create/delete/mapping/settings/alias changes) targeting the specified index — includes user, role, and source IP.",
+  "id": "app-index-triage-index_admin_actions",
+  "tags": [
+    "app-index-triage",
+    "application",
+    "observability",
+    "stack-monitoring"
+  ],
+  "type": "esql"
+}

@@ -1,0 +1,28 @@
+{
+  "configuration": {
+    "params": {
+      "cluster_name": {
+        "description": "Optional cluster name filter; use an empty string to query all clusters.",
+        "type": "string"
+      },
+      "index_pattern": {
+        "description": "Index or data stream pattern to investigate (e.g. logs-app.payments-*, .ds-metrics-k8s-*). Required.",
+        "type": "string"
+      },
+      "lookback": {
+        "description": "Lookback window as ES|QL time span text (e.g. 15 minutes, 1 hour, 24 hours).",
+        "type": "string"
+      }
+    },
+    "query": "FROM .monitoring-es-*\n| WHERE @timestamp >= NOW() - TO_TIMEDURATION(?lookback)\n| WHERE metricset.name == \"index\"\n| WHERE elasticsearch.index.name LIKE ?index_pattern\n| WHERE (?cluster_name == \"\" OR elasticsearch.cluster.name == ?cluster_name)\n| STATS index_failed = MAX(elasticsearch.index.total.indexing.index_failed), index_total = MAX(elasticsearch.index.total.indexing.index_total), delete_total = MAX(elasticsearch.index.total.indexing.delete_total) BY bucket = DATE_TRUNC(5 minutes, @timestamp), elasticsearch.cluster.name, elasticsearch.index.name\n| WHERE index_failed > 0\n| SORT bucket DESC, index_failed DESC\n| LIMIT 50"
+  },
+  "description": "Show indexing failure counts over time for the target index from the monitoring stream — filters to intervals where failures are non-zero.",
+  "id": "app-index-triage-index_indexing_failures",
+  "tags": [
+    "app-index-triage",
+    "application",
+    "observability",
+    "stack-monitoring"
+  ],
+  "type": "esql"
+}

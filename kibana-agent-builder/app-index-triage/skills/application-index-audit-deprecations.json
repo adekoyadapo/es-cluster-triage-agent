@@ -1,0 +1,11 @@
+{
+  "content": "# Application Index Audit and Deprecations\n\nUse this skill when the target index has access, security, or forward-compatibility concerns:\n\n- Access-denied errors are occurring on the index — users or services cannot read or write it\n- Unexpected administrative actions were taken on the index (mapping changes, setting updates, alias modifications, deletion)\n- Deprecation warnings are being logged against this index — signals breaking changes before a major upgrade\n- Suspicious `run_as` or anonymous access (`user.name: _anonymous`) against the index\n\nNote: Audit logging is active on this cluster. Absence of audit events for an index is itself meaningful — it means no access is occurring, which may indicate the index is disconnected from its expected consumers.\n\n## Workflow\n\n1. Use `app-index-triage-index_audit_access_denied` to identify users and source IPs repeatedly denied access — grouped by time bucket so spikes are visible.\n2. Use `app-index-triage-index_admin_actions` to surface sensitive admin events (create/delete/put_mapping/update_settings/alias changes) and who performed them.\n3. Use `app-index-triage-index_deprecation_warnings` to find deprecation keys for this index — each key corresponds to a specific deprecated feature that must be addressed before upgrading.\n\n## Output guidance\n\n- For access-denied: identify the user name, role, and source IP. Determine if it is a service account (expected pattern) or an anomalous user.\n- For admin actions: note the timestamp, action type, and performing user. Flag any `delete_index` or `put_mapping` that was unexpected.\n- For deprecation: summarize the deprecation key and recommend the remediation (consult Elasticsearch Deprecation API output or migration guide).\n- Cross-reference access-denied spikes with the time of any admin action that may have changed index permissions.\n",
+  "description": "Investigate access-denied audit events, sensitive admin actions, and deprecation warnings for the target index.",
+  "id": "application.index.audit-deprecations",
+  "name": "Application Index Audit and Deprecations",
+  "tool_ids": [
+    "app-index-triage-index_audit_access_denied",
+    "app-index-triage-index_admin_actions",
+    "app-index-triage-index_deprecation_warnings"
+  ]
+}

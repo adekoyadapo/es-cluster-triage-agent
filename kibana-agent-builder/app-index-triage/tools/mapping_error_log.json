@@ -1,0 +1,28 @@
+{
+  "configuration": {
+    "params": {
+      "cluster_name": {
+        "description": "Optional cluster name filter; use an empty string to query all clusters.",
+        "type": "string"
+      },
+      "index_pattern": {
+        "description": "Index or data stream pattern to investigate (e.g. logs-app.payments-*, .ds-metrics-k8s-*). Required.",
+        "type": "string"
+      },
+      "lookback": {
+        "description": "Lookback window as ES|QL time span text (e.g. 15 minutes, 1 hour, 24 hours).",
+        "type": "string"
+      }
+    },
+    "query": "FROM elastic-cloud-logs-8\n| WHERE @timestamp >= NOW() - TO_TIMEDURATION(?lookback)\n| WHERE event.dataset == \"elasticsearch.server\"\n| WHERE (log.logger LIKE \"*MapperService*\" OR log.logger LIKE \"*MapperParsingException*\" OR message LIKE \"*total fields*\" OR message LIKE \"*mapper_parsing_exception*\" OR message LIKE \"*mapping explosion*\" OR message LIKE \"*dynamic mapping*\" OR message LIKE \"*field limit*\")\n| WHERE elasticsearch.index.name LIKE ?index_pattern\n| WHERE (?cluster_name == \"\" OR elasticsearch.cluster.name == ?cluster_name)\n| STATS count = COUNT(*) BY elasticsearch.index.name, error.type, log.level\n| SORT count DESC\n| LIMIT 50"
+  },
+  "description": "Find mapper_parsing_exception and total-fields-limit errors from the server log for the target index.",
+  "id": "app-index-triage-mapping_error_log",
+  "tags": [
+    "app-index-triage",
+    "application",
+    "observability",
+    "stack-monitoring"
+  ],
+  "type": "esql"
+}

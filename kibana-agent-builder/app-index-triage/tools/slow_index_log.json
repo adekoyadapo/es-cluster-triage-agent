@@ -1,0 +1,28 @@
+{
+  "configuration": {
+    "params": {
+      "cluster_name": {
+        "description": "Optional cluster name filter; use an empty string to query all clusters.",
+        "type": "string"
+      },
+      "index_pattern": {
+        "description": "Index or data stream pattern to investigate (e.g. logs-app.payments-*, .ds-metrics-k8s-*). Required.",
+        "type": "string"
+      },
+      "lookback": {
+        "description": "Lookback window as ES|QL time span text (e.g. 15 minutes, 1 hour, 24 hours).",
+        "type": "string"
+      }
+    },
+    "query": "FROM elastic-cloud-logs-8\n| WHERE @timestamp >= NOW() - TO_TIMEDURATION(?lookback)\n| WHERE event.dataset == \"elasticsearch.slowlog\"\n| WHERE elasticsearch.index.name LIKE ?index_pattern\n| WHERE (?cluster_name == \"\" OR elasticsearch.cluster.name == ?cluster_name)\n| STATS p95_ms = PERCENTILE(elasticsearch.slowlog.took_millis, 95), p99_ms = PERCENTILE(elasticsearch.slowlog.took_millis, 99), max_ms = MAX(elasticsearch.slowlog.took_millis), count = COUNT(*) BY elasticsearch.cluster.name, elasticsearch.index.name, log.logger\n| SORT p99_ms DESC\n| LIMIT 20"
+  },
+  "description": "Show p95/p99 slow-log latency for search and indexing operations on the target index. An empty result means slow-log thresholds are not configured or all operations are below threshold.",
+  "id": "app-index-triage-slow_index_log",
+  "tags": [
+    "app-index-triage",
+    "application",
+    "observability",
+    "stack-monitoring"
+  ],
+  "type": "esql"
+}

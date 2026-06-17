@@ -1,0 +1,28 @@
+{
+  "configuration": {
+    "params": {
+      "cluster_name": {
+        "description": "Optional cluster name filter; use an empty string to query all clusters.",
+        "type": "string"
+      },
+      "index_pattern": {
+        "description": "Index or data stream pattern to investigate (e.g. logs-app.payments-*, .ds-metrics-k8s-*). Required.",
+        "type": "string"
+      },
+      "lookback": {
+        "description": "Lookback window as ES|QL time span text (e.g. 15 minutes, 1 hour, 24 hours).",
+        "type": "string"
+      }
+    },
+    "query": "FROM elastic-cloud-logs-8\n| WHERE @timestamp >= NOW() - TO_TIMEDURATION(?lookback)\n| WHERE event.dataset == \"elasticsearch.server\"\n| WHERE (message LIKE \"*rejected execution*\" OR message LIKE \"*EsRejectedExecutionException*\" OR message LIKE \"*bulk*rejected*\" OR message LIKE \"*write*rejected*\" OR message LIKE \"*indexing pressure*\")\n| WHERE elasticsearch.index.name LIKE ?index_pattern\n| WHERE (?cluster_name == \"\" OR elasticsearch.cluster.name == ?cluster_name)\n| STATS count = COUNT(*) BY bucket = DATE_TRUNC(5 minutes, @timestamp), elasticsearch.cluster.name, elasticsearch.index.name, log.level\n| SORT bucket DESC, count DESC\n| LIMIT 50"
+  },
+  "description": "Find bulk and write thread-pool rejection log entries scoped to the target index in the server log.",
+  "id": "app-index-triage-index_write_rejections",
+  "tags": [
+    "app-index-triage",
+    "application",
+    "observability",
+    "stack-monitoring"
+  ],
+  "type": "esql"
+}

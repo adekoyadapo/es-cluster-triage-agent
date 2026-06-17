@@ -128,7 +128,7 @@ LOG_DS=elastic-cloud-logs-8
 python3 install/install.py
 ```
 
-The installer walks through 9 interactive steps:
+The installer walks through 10 interactive steps:
 
 | Step | What happens |
 |---|---|
@@ -141,6 +141,31 @@ The installer walks through 9 interactive steps:
 | 7 · Workflow setup | Choose alert-triggered, scheduled, both, or agent-only |
 | 8 · Verification | Confirms every component is reachable in Kibana |
 | 9 · Live validation | Runs a live `cluster_health_summary` query |
+| 10 · Optional agents | Offers to deploy the Application Index Triage Agent (see below) |
+
+---
+
+## Optional: Application Index Triage Agent
+
+After the main agent is deployed and validated, the installer offers to deploy a second optional persona:
+
+> **Application Index Triage Agent** — drills into a single application index to find ingestion failures, mapping issues, ILM stalls, slow operations, and audit events.
+
+It reuses the same monitoring and log datastreams configured in step 5. No additional credentials or patterns are needed.
+
+**Skills included:**
+
+| Skill | Investigates |
+|---|---|
+| Index Health & Allocation | Unassigned shards, recovery stalls, shard-limit blocks |
+| Mapping & Schema | `mapper_parsing_exception`, field-count explosion, dynamic mapping |
+| Lifecycle & Rollover | ILM step errors, rollover failures, broken write aliases |
+| Ingestion Performance & Slow Ops | Bulk rejections, indexing failures, slow-log latency, circuit breakers |
+| Audit & Deprecations | `access_denied` spikes, admin actions (create/delete/put_mapping), deprecation warnings |
+
+Built-in `observability.investigation` is also available for service-level questions tied to the index.
+
+To deploy without re-running the full installer, answer **Yes** at step 10. The optional agent deploys into the same Kibana space as the main agent and can be uninstalled together via `python3 install/uninstall.py`.
 
 When the installer finishes it prints the direct Kibana URL to your deployed agent.
 

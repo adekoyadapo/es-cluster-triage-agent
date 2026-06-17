@@ -147,6 +147,28 @@ Five skill groups with 19 ES|QL tools cover the full triage surface:
 
 ---
 
+## Optional: Application Index Triage Agent
+
+A second agent persona (`app-index-triage-agent`) can be deployed after the main agent. The installer asks at step 10 of the setup flow — answer **Yes** to deploy it into the same Kibana space.
+
+It focuses on **per-index** problems on application data streams. It reuses the same monitoring and log datastreams configured for the main agent and requires no additional credentials or patterns.
+
+### 5 skills, 14 tools
+
+| Skill | Focus |
+|---|---|
+| Index Health & Allocation | Unassigned shards (NODE_LEFT, NO_VALID_SHARD_COPY, ALLOCATION_FAILED), recovery stalls |
+| Mapping & Schema | `mapper_parsing_exception`, total-fields limit, fielddata memory growth, dynamic mapping abuse |
+| Lifecycle & Rollover | ILM step errors, rollover failures, broken write aliases, DSL errors |
+| Ingestion Performance & Slow Ops | Bulk rejections, `index_failed` counts, slow-log p95/p99, circuit-breaker trips |
+| Audit & Deprecations | `access_denied` spikes, admin actions (create/delete/put_mapping), deprecation warnings |
+
+Built-in `observability.investigation` is also assigned for service-level questions tied to the index.
+
+**Routing:** every tool requires an `index_pattern` parameter. The agent asks for it once if not provided in the prompt. Log events are filtered by `event.dataset` inside the user-configured log pattern, so it works with Filebeat, Elastic Agent, `elastic-cloud-logs-8`, or any other shipper that preserves ECS.
+
+---
+
 ## Agent routing logic
 
 The agent selects the appropriate skill group based on the incoming signal:

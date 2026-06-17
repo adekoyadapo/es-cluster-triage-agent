@@ -247,6 +247,11 @@ def main() -> int:
     # Support both old single alias and new dual-alias format
     monitoring_alias = installed.get("monitoring_alias") or installed.get("alias")
     log_alias = installed.get("log_alias")
+    # Optional bundle resources
+    optional_tool_ids = installed.get("optional_tools", [])
+    optional_skill_ids = installed.get("optional_skills", [])
+    optional_agent_ids = installed.get("optional_agents", [])
+    optional_workflow_ids = installed.get("optional_workflows", [])
 
     print(f"  {c(CYAN, 'Installed at:')} {installed.get('installed_at', 'unknown')}")
     print(f"  {c(CYAN, 'Kibana space:')} {namespace}")
@@ -264,6 +269,10 @@ def main() -> int:
         print(f"  · ES alias: {monitoring_alias}")
     if log_alias and log_alias != "elastic-cloud-logs-8":
         print(f"  · ES alias: {log_alias}")
+    if optional_tool_ids or optional_skill_ids or optional_agent_ids:
+        print(f"  · Optional agent: {', '.join(optional_agent_ids) or 'none'} ({len(optional_tool_ids)} tools, {len(optional_skill_ids)} skills)")
+    for wid in optional_workflow_ids:
+        print(f"  · Optional workflow: {wid}")
 
     if not confirm("Proceed with uninstall?", False):
         print("  Aborted.")
@@ -282,20 +291,22 @@ def main() -> int:
     print()
     print(c(BOLD, "  Removing deployment..."))
 
-    # Workflows first
-    for wid in workflow_ids:
+    # Workflows first (main + optional)
+    for wid in workflow_ids + optional_workflow_ids:
         delete_item(kb_url, hdr, space_path(namespace, f"/api/workflows/workflow/{wid}"), f"workflow/{wid}")
 
-    # Agent (depends on skills/tools)
+    # Agents (depends on skills/tools)
+    for oid in optional_agent_ids:
+        delete_item(kb_url, hdr, space_path(namespace, f"/api/agent_builder/agents/{oid}"), f"agent/{oid}")
     if agent_id:
         delete_item(kb_url, hdr, space_path(namespace, f"/api/agent_builder/agents/{agent_id}"), f"agent/{agent_id}")
 
-    # Skills
-    for skill_id in skill_ids:
+    # Skills (optional first, then main)
+    for skill_id in optional_skill_ids + skill_ids:
         delete_item(kb_url, hdr, space_path(namespace, f"/api/agent_builder/skills/{skill_id}"), f"skill/{skill_id}")
 
-    # Tools
-    for tool_id in tool_ids:
+    # Tools (optional first, then main)
+    for tool_id in optional_tool_ids + tool_ids:
         delete_item(kb_url, hdr, space_path(namespace, f"/api/agent_builder/tools/{tool_id}"), f"tool/{tool_id}")
 
     # Connector

@@ -36,7 +36,7 @@ CONNECTOR_TYPE_ID = ".slack"
 WORKFLOW_ID_SUFFIX = "es-triage"
 AGENT_ID = "es-cluster-triage-agent"
 
-TOTAL_STEPS = 9
+TOTAL_STEPS = 10
 
 # ── ANSI colours ───────────────────────────────────────────────────────────────
 R = "\033[0m"
@@ -1261,6 +1261,193 @@ def print_summary(creds: dict[str, str], namespace: str, ds_info: dict[str, str]
     """)
 
 
+# ── [10] Optional agent bundles ────────────────────────────────────────────────
+def deploy_optional_bundle(
+    creds: dict[str, str],
+    hdr: tuple[str, str],
+    namespace: str,
+    ds_info: dict[str, str],
+    bundle_dir: Path,
+    agent_id: str,
+    workflow_id_suffix: str,
+    installed: dict[str, Any],
+) -> None:
+    """Deploy one optional bundle (tools → skills → agent → optional workflows)."""
+    kb_url = creds["KB_URL"]
+    manifest = load_json(bundle_dir / "manifest.json")
+    agent_data = load_json(bundle_dir / manifest["agent"])
+    skills = [load_json(bundle_dir / p) for p in manifest.get("skill_files", [])]
+    tools = [load_json(bundle_dir / p) for p in manifest.get("tool_files", [])]
+
+    deployed_agent_id = agent_data.get("id", agent_id)
+
+    monitoring_ds = ds_info["monitoring_ds"]
+    log_ds = ds_info["log_ds"]
+    monitoring_alias = ds_info.get("monitoring_alias", "es-monitoring")
+    log_alias = ds_info.get("log_alias", "elastic-cloud-logs-8")
+    monitoring_alias_created = ds_info.get("monitoring_alias_created", False)
+    log_alias_created = ds_info.get("log_alias_created", False)
+    monitoring_target = monitoring_alias if monitoring_alias_created else monitoring_ds
+    log_target = log_alias if log_alias_created else log_ds
+
+    for tool in tools:
+        cfg = tool.get("configuration", {})
+        query = cfg.get("query", "")
+        query = re.sub(r'FROM \.monitoring-es-\S+', f"FROM {monitoring_target}", query)
+        if log_target != "elastic-cloud-logs-8":
+            query = query.replace("FROM elastic-cloud-logs-8", f"FROM {log_target}")
+        cfg["query"] = query
+        tool["configuration"] = cfg
+
+    ok(f"Tool queries patched: monitoring → {monitoring_target}, logs → {log_target}")
+
+    info("Removing previous optional installation if any…")
+    delete_if_exists(kb_url, hdr, space_path(namespace, f"/api/agent_builder/agents/{deployed_agent_id}"))
+    for sk in skills:
+        delete_if_exists(kb_url, hdr, space_path(namespace, f"/api/agent_builder/skills/{sk['id']}"))
+    for t in tools:
+        delete_if_exists(kb_url, hdr, space_path(namespace, f"/api/agent_builder/tools/{t['id']}"))
+
+    total_deploy = len(tools) + len(skills) + 1
+    done_count = 0
+
+    def tick(label: str) -> None:
+        nonlocal done_count
+        done_count += 1
+        progress_bar(label, done_count, total_deploy)
+
+    for tool in tools:
+        try:
+            kibana_request(kb_url, hdr, "POST", space_path(namespace, "/api/agent_builder/tools"), body=tool)
+            installed.setdefault("optional_tools", []).append(tool["id"])
+        except RuntimeError as exc:
+            if "HTTP 409" in str(exc):
+                installed.setdefault("optional_tools", []).append(tool["id"])
+            else:
+                raise
+        tick(f"Tool: {tool['id'][:44]}")
+
+    for skill in skills:
+        try:
+            kibana_request(kb_url, hdr, "POST", space_path(namespace, "/api/agent_builder/skills"), body=skill)
+            installed.setdefault("optional_skills", []).append(skill["id"])
+        except RuntimeError as exc:
+            if "HTTP 409" in str(exc):
+                installed.setdefault("optional_skills", []).append(skill["id"])
+            else:
+                raise
+        tick(f"Skill: {skill['id'][:44]}")
+
+    try:
+        kibana_request(kb_url, hdr, "POST", space_path(namespace, "/api/agent_builder/agents"), body=agent_data)
+        installed.setdefault("optional_agents", []).append(deployed_agent_id)
+    except RuntimeError as exc:
+        if "HTTP 409" in str(exc):
+            installed.setdefault("optional_agents", []).append(deployed_agent_id)
+        else:
+            raise
+    tick(f"Agent: {deployed_agent_id}")
+    ok(f"Optional agent '{deployed_agent_id}' deployed")
+
+    INSTALLED_FILE.write_text(json.dumps(installed, indent=2))
+    INSTALLED_FILE.chmod(0o600)
+
+    if not confirm("Deploy a workflow for this optional agent?", False):
+        info("Skipping — you can deploy workflows manually via the Kibana Workflows UI")
+        return
+
+    alert_tmpl = ROOT / "workflows" / f"{workflow_id_suffix}.workflow.yaml"
+    scheduled_tmpl = ROOT / "workflows" / f"{workflow_id_suffix}-scheduled.workflow.yaml"
+
+    print(f"""
+  {c(CYAN, "Workflow Options")}
+  {c(DIM, '1')} {c(BOLD, 'Alert trigger')}    — runs when a Kibana alert fires
+  {c(DIM, '2')} {c(BOLD, 'Scheduled')}        — runs on a fixed interval
+  {c(DIM, '3')} {c(BOLD, 'Both')}             — deploy both variants
+  {c(DIM, '4')} {c(BOLD, 'Skip')}             — agent only, no workflow
+    """)
+
+    wf_choice = ask("Workflow type", "1").strip()
+    deployed_wfs: list[str] = []
+
+    def render(template_path: Path) -> str:
+        yaml = template_path.read_text()
+        yaml = yaml.replace("__METRICS_PATTERN__", monitoring_ds)
+        yaml = yaml.replace("__AGENT_ID__", deployed_agent_id)
+        return yaml
+
+    sp_prefix = f"{namespace}-" if namespace != "default" else ""
+    alert_id = f"{sp_prefix}{workflow_id_suffix}-alert"
+    scheduled_id = f"{sp_prefix}{workflow_id_suffix}-scheduled"
+
+    if wf_choice in ("1", "3") and alert_tmpl.exists():
+        try:
+            deploy_workflow_yaml(kb_url, hdr, namespace, alert_id, render(alert_tmpl), wf_name=f"App Index Triage Alert ({namespace})")
+            deployed_wfs.append(alert_id)
+            ok(f"Alert workflow deployed: {alert_id}")
+        except WorkflowPermissionError:
+            warn(f"Alert workflow skipped — API key lacks workflow management privileges")
+        except RuntimeError as exc:
+            warn(f"Alert workflow failed: {exc}")
+
+    if wf_choice in ("2", "3") and scheduled_tmpl.exists():
+        interval = ask("Schedule interval (e.g. 1h, 30m, 6h)", "1h").strip()
+        if not re.match(r'^\d+[smhd]$', interval):
+            interval = "1h"
+        try:
+            yaml_text = render(scheduled_tmpl).replace("__SCHEDULE_INTERVAL__", interval)
+            deploy_workflow_yaml(kb_url, hdr, namespace, scheduled_id, yaml_text, wf_name=f"App Index Triage Scheduled ({namespace})")
+            deployed_wfs.append(scheduled_id)
+            ok(f"Scheduled workflow deployed: {scheduled_id} (every {interval})")
+        except WorkflowPermissionError:
+            warn(f"Scheduled workflow skipped — API key lacks workflow management privileges")
+        except RuntimeError as exc:
+            warn(f"Scheduled workflow failed: {exc}")
+
+    if deployed_wfs:
+        installed.setdefault("optional_workflows", []).extend(deployed_wfs)
+        INSTALLED_FILE.write_text(json.dumps(installed, indent=2))
+        INSTALLED_FILE.chmod(0o600)
+
+
+def offer_optional_agents(
+    creds: dict[str, str],
+    hdr: tuple[str, str],
+    namespace: str,
+    ds_info: dict[str, str],
+    installed: dict[str, Any],
+) -> None:
+    step(10, "Optional Agent Personas")
+
+    optional_bundle_dir = ROOT / "kibana-agent-builder" / "app-index-triage"
+    if not optional_bundle_dir.exists():
+        info("No optional agent bundles found — skipping")
+        return
+
+    print(f"""
+  {c(CYAN + BOLD, 'Optional: Application Index Triage Agent')}
+  {c(DIM, 'Drills into a single application index to find ingestion failures,')}
+  {c(DIM, 'mapping issues, ILM stalls, slow operations, and audit events.')}
+  {c(DIM, 'Uses the same monitoring and log datastreams as the main agent.')}
+    """)
+
+    if not confirm("Deploy the Application Index Triage Agent?", False):
+        info("Skipping — run the installer again to add it later")
+        return
+
+    try:
+        deploy_optional_bundle(
+            creds, hdr, namespace, ds_info,
+            bundle_dir=optional_bundle_dir,
+            agent_id="app-index-triage-agent",
+            workflow_id_suffix="app-index-triage",
+            installed=installed,
+        )
+    except RuntimeError as exc:
+        warn(f"Optional agent deployment failed: {exc}")
+        info("The main agent is unaffected. Run the installer again to retry the optional agent.")
+
+
 # ── Optional: MCP app ──────────────────────────────────────────────────────────
 def offer_mcp_app() -> None:
     mcp_dir = ROOT / "mcp-app"
@@ -1327,6 +1514,7 @@ def main() -> int:
         deploy_workflows(creds, hdr, namespace, ds_info, installed)
         verify_deployment(creds, hdr, namespace)
         live_agent_validation(creds, hdr, namespace, ds_info)
+        offer_optional_agents(creds, hdr, namespace, ds_info, installed)
         print_summary(creds, namespace, ds_info)
         offer_mcp_app()
     except SystemExit:

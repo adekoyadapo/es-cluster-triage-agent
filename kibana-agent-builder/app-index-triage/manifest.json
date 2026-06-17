@@ -1,0 +1,27 @@
+{
+  "agent": "agent.json",
+  "note": "Optional import-ready bundle for application index-level triage. Uses the same monitoring and log datastreams as the cluster triage bundle. Query patching and deployment are handled by the Python installer.",
+  "skill_files": [
+    "skills/application-index-health.json",
+    "skills/application-index-mapping.json",
+    "skills/application-index-lifecycle.json",
+    "skills/application-index-indexing-slowlog.json",
+    "skills/application-index-audit-deprecations.json"
+  ],
+  "tool_files": [
+    "tools/index_status_summary.json",
+    "tools/index_unassigned_events.json",
+    "tools/index_recovery_events.json",
+    "tools/index_field_count_trend.json",
+    "tools/mapping_error_log.json",
+    "tools/ilm_step_errors.json",
+    "tools/rollover_failure_log.json",
+    "tools/index_indexing_failures.json",
+    "tools/index_write_rejections.json",
+    "tools/slow_index_log.json",
+    "tools/circuit_breaker_trips.json",
+    "tools/index_audit_access_denied.json",
+    "tools/index_admin_actions.json",
+    "tools/index_deprecation_warnings.json"
+  ]
+}

@@ -1,0 +1,28 @@
+{
+  "configuration": {
+    "params": {
+      "cluster_name": {
+        "description": "Optional cluster name filter; use an empty string to query all clusters.",
+        "type": "string"
+      },
+      "index_pattern": {
+        "description": "Index or data stream pattern to investigate (e.g. logs-app.payments-*, .ds-metrics-k8s-*). Required.",
+        "type": "string"
+      },
+      "lookback": {
+        "description": "Lookback window as ES|QL time span text (e.g. 15 minutes, 1 hour, 24 hours).",
+        "type": "string"
+      }
+    },
+    "query": "FROM .monitoring-es-*\n| WHERE @timestamp >= NOW() - TO_TIMEDURATION(?lookback)\n| WHERE metricset.name == \"index\"\n| WHERE elasticsearch.index.name LIKE ?index_pattern\n| WHERE (?cluster_name == \"\" OR elasticsearch.cluster.name == ?cluster_name)\n| STATS fielddata_memory_bytes = MAX(elasticsearch.index.total.fielddata.memory_size_in_bytes), fielddata_evictions = MAX(elasticsearch.index.total.fielddata.evictions), segments_count = MAX(elasticsearch.index.total.segments.count), doc_values_memory_bytes = MAX(elasticsearch.index.total.segments.doc_values_memory_in_bytes), segment_memory_bytes = MAX(elasticsearch.index.total.segments.memory_in_bytes) BY bucket = DATE_TRUNC(1 hour, @timestamp), elasticsearch.cluster.name, elasticsearch.index.name\n| EVAL mapping_pressure_score = COALESCE(fielddata_memory_bytes, 0) + COALESCE(doc_values_memory_bytes, 0) + COALESCE(segment_memory_bytes, 0) + COALESCE(fielddata_evictions, 0) * 1000000 + COALESCE(segments_count, 0) * 100\n| SORT mapping_pressure_score DESC\n| LIMIT 50"
+  },
+  "description": "Measure fielddata memory, doc-values memory, segment memory, and segment count growth for the target index — leading indicators of mapping explosion.",
+  "id": "app-index-triage-index_field_count_trend",
+  "tags": [
+    "app-index-triage",
+    "application",
+    "observability",
+    "stack-monitoring"
+  ],
+  "type": "esql"
+}

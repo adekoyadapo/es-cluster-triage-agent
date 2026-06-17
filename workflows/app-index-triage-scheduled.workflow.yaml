@@ -1,0 +1,55 @@
+name: Application Index Triage Scheduled
+description: Runs application index-level triage on a schedule and produces an AI summary. Review results in Kibana Workflows execution history.
+enabled: true
+tags: ["observability", "stack-monitoring", "application", "app-index-triage", "scheduled"]
+consts:
+  default_metrics_pattern: "__METRICS_PATTERN__"
+triggers:
+  - type: scheduled
+    with:
+      every: "__SCHEDULE_INTERVAL__"
+steps:
+  - name: index_health_scan
+    type: elasticsearch.request
+    with:
+      method: POST
+      path: /_query
+      body:
+        query: |
+          FROM {{ consts.default_metrics_pattern }}
+          | WHERE @timestamp >= NOW() - 1 hour
+          | WHERE metricset.name == "index"
+          | WHERE elasticsearch.index.name IS NOT NULL
+          | STATS
+              docs_count = MAX(elasticsearch.index.total.docs.count),
+              store_bytes = MAX(elasticsearch.index.total.store.size_in_bytes),
+              index_failed = MAX(elasticsearch.index.total.indexing.index_failed),
+              index_total = MAX(elasticsearch.index.total.indexing.index_total),
+              fielddata_memory_bytes = MAX(elasticsearch.index.total.fielddata.memory_size_in_bytes),
+              segments_count = MAX(elasticsearch.index.total.segments.count)
+            BY elasticsearch.cluster.name, elasticsearch.index.name
+          | WHERE index_failed > 0 OR fielddata_memory_bytes > 104857600
+          | SORT index_failed DESC, fielddata_memory_bytes DESC
+          | LIMIT 20
+  - name: summarize
+    type: ai.agent
+    agent-id: "__AGENT_ID__"
+    with:
+      message: |
+        This is a scheduled application index health scan. Analyse the monitoring data below and identify any indices with elevated failure counts or high fielddata memory usage.
+
+        For each index showing problems, use the appropriate skill to investigate further.
+        If all indices look healthy, confirm that clearly.
+        If there are concerns, identify the most likely issue per index and recommend next checks.
+
+        Return a Markdown report with these sections only:
+        Summary
+        Indices with issues (list each with: index name, most likely issue, evidence, recommended next checks)
+        Healthy indices (count only)
+        Time window
+        Confidence level
+
+        Metrics source: {{ consts.default_metrics_pattern }}
+
+        Index health evidence:
+        {{ steps.index_health_scan.output | json }}
