@@ -8,7 +8,6 @@ Requires Python 3.8+ with no external dependencies.
 from __future__ import annotations
 
 import base64
-import getpass
 import json
 import os
 import re
@@ -133,24 +132,82 @@ def ask(prompt: str, default: str = "") -> str:
 
 
 def ask_secret(prompt: str, show_prefix: int = 0) -> str:
+    """Read a secret interactively.
+
+    Characters appear in real-time: the first `show_prefix` chars are shown
+    in cyan so the user can confirm their paste landed; subsequent chars are
+    masked with •.  Falls back to silent getpass when stdin is not a tty.
+    """
+    import select as _select
+
+    sys.stdout.write(f"\n  {c(BOLD, prompt)}: ")
+    sys.stdout.flush()
+
     try:
-        val = getpass.getpass(f"\n  {c(BOLD, prompt)}: ")
-    except (EOFError, KeyboardInterrupt):
-        print()
-        raise SystemExit(0)
-    val = val.strip()
-    if val:
-        if show_prefix and len(val) > show_prefix:
-            receipt = f"  {c(CYAN, val[:show_prefix])}{c(DIM, '••••••••')}  {c(DIM, '(received)')}"
-        else:
-            receipt = f"  {c(DIM, '••••••••')}  {c(DIM, '(received)')}"
+        import tty as _tty, termios as _termios
+        fd = sys.stdin.fileno()
+        old_attrs = _termios.tcgetattr(fd)
+    except Exception:
+        # stdin is not a tty (e.g. piped) — silent fallback
+        import getpass as _getpass
         try:
-            with open("/dev/tty", "w") as tty:
-                tty.write(receipt + "\n")
-                tty.flush()
-        except OSError:
-            print(receipt, flush=True)
-    return val
+            val = _getpass.getpass("").strip()
+        except (EOFError, KeyboardInterrupt):
+            sys.stdout.write("\n")
+            raise SystemExit(0)
+        return val
+
+    chars: list[str] = []
+
+    def _emit(text: str) -> None:
+        sys.stdout.write(text)
+        sys.stdout.flush()
+
+    try:
+        _tty.setraw(fd)
+        while True:
+            raw = os.read(fd, 1)
+            if not raw:
+                break
+            n = raw[0]
+            if n in (0x0D, 0x0A):       # Enter / CR / LF
+                break
+            elif n == 0x03:              # Ctrl+C
+                raise KeyboardInterrupt
+            elif n == 0x04:              # Ctrl+D (EOF)
+                if not chars:
+                    raise EOFError
+            elif n in (0x7F, 0x08):      # Backspace / DEL
+                if chars:
+                    chars.pop()
+                    _emit("\b \b")
+            elif n == 0x1B:              # ESC — swallow escape sequence
+                r, _, _ = _select.select([fd], [], [], 0.05)
+                if r:
+                    os.read(fd, 1)       # consume '['
+                    r2, _, _ = _select.select([fd], [], [], 0.02)
+                    if r2:
+                        os.read(fd, 1)   # consume trailing letter
+            elif n >= 0x20:              # printable ASCII
+                ch = chr(n)
+                chars.append(ch)
+                pos = len(chars) - 1
+                if show_prefix > 0 and pos < show_prefix:
+                    _emit(f"{CYAN}{ch}{R}")
+                else:
+                    _emit(f"{DIM}•{R}")
+    except (KeyboardInterrupt, EOFError):
+        _termios.tcsetattr(fd, _termios.TCSADRAIN, old_attrs)
+        _emit("\n")
+        raise SystemExit(0)
+    finally:
+        try:
+            _termios.tcsetattr(fd, _termios.TCSADRAIN, old_attrs)
+        except Exception:
+            pass
+
+    _emit("\n")
+    return "".join(chars).strip()
 
 
 def confirm(prompt: str, default: bool = True) -> bool:
