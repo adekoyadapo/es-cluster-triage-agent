@@ -14,9 +14,9 @@
         "type": "string"
       }
     },
-    "query": "FROM elastic-cloud-logs-8\n| WHERE @timestamp >= NOW() - TO_TIMEDURATION(?lookback)\n| WHERE event.dataset LIKE \"elasticsearch.audit*\"\n| WHERE event.action == \"access_denied\"\n| WHERE TO_STRING(indices) LIKE ?index_pattern\n| WHERE (?cluster_name == \"\" OR elasticsearch.cluster.name == ?cluster_name)\n| STATS count = COUNT(*) BY bucket = DATE_TRUNC(5 minutes, @timestamp), user.name, source.ip, event.action\n| SORT bucket DESC, count DESC\n| LIMIT 50"
+    "query": "FROM elastic-cloud-logs-8\n| WHERE @timestamp >= NOW() - TO_TIMEDURATION(?lookback)\n| WHERE event.dataset LIKE \"elasticsearch.audit*\"\n| WHERE event.action == \"access_denied\"\n| WHERE (elasticsearch.index.name LIKE ?index_pattern OR url.original LIKE CONCAT(\"/\", ?index_pattern, \"*\"))\n| WHERE (?cluster_name == \"\" OR elasticsearch.cluster.name == ?cluster_name)\n| STATS count = COUNT(*) BY bucket = DATE_TRUNC(5 minutes, @timestamp), user.name, source.ip, event.action, url.original\n| SORT bucket DESC, count DESC\n| LIMIT 50"
   },
-  "description": "Count access_denied audit events targeting the specified index, grouped by user, source IP, and time bucket.",
+  "description": "Count access_denied audit events targeting the specified index, grouped by user, source IP, and time bucket. Matches via both the index name field and the request URL path.",
   "id": "app-index-triage-index_audit_access_denied",
   "tags": [
     "app-index-triage",

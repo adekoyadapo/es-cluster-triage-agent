@@ -14,9 +14,9 @@
         "type": "string"
       }
     },
-    "query": "FROM elastic-cloud-logs-8\n| WHERE @timestamp >= NOW() - TO_TIMEDURATION(?lookback)\n| WHERE event.dataset == \"elasticsearch.slowlog\"\n| WHERE elasticsearch.index.name LIKE ?index_pattern\n| WHERE (?cluster_name == \"\" OR elasticsearch.cluster.name == ?cluster_name)\n| STATS p95_ms = PERCENTILE(elasticsearch.slowlog.took_millis, 95), p99_ms = PERCENTILE(elasticsearch.slowlog.took_millis, 99), max_ms = MAX(elasticsearch.slowlog.took_millis), count = COUNT(*) BY elasticsearch.cluster.name, elasticsearch.index.name, log.logger\n| SORT p99_ms DESC\n| LIMIT 20"
+    "query": "FROM elastic-cloud-logs-8\n| WHERE @timestamp >= NOW() - TO_TIMEDURATION(?lookback)\n| WHERE event.dataset == \"elasticsearch.slowlog\"\n| WHERE elasticsearch.index.name LIKE ?index_pattern\n| WHERE (?cluster_name == \"\" OR elasticsearch.cluster.name == ?cluster_name)\n| STATS count = COUNT(*), latest = MAX(@timestamp) BY elasticsearch.cluster.name, elasticsearch.index.name, log.logger\n| SORT count DESC\n| LIMIT 20"
   },
-  "description": "Show p95/p99 slow-log latency for search and indexing operations on the target index. An empty result means slow-log thresholds are not configured or all operations are below threshold.",
+  "description": "Count slow-log entries for search and indexing operations on the target index. An empty result means slow-log thresholds are not configured on the monitored cluster or all operations are within threshold.",
   "id": "app-index-triage-slow_index_log",
   "tags": [
     "app-index-triage",

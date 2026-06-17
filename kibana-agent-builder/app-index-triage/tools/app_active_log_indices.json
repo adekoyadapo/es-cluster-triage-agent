@@ -1,0 +1,24 @@
+{
+  "configuration": {
+    "params": {
+      "cluster_name": {
+        "description": "Optional cluster name filter; use an empty string to query all clusters.",
+        "type": "string"
+      },
+      "lookback": {
+        "description": "Lookback window as ES|QL time span text (e.g. 15 minutes, 1 hour, 24 hours).",
+        "type": "string"
+      }
+    },
+    "query": "FROM elastic-cloud-logs-8\n| WHERE @timestamp >= NOW() - TO_TIMEDURATION(?lookback)\n| WHERE event.dataset LIKE \"elasticsearch.*\"\n| WHERE elasticsearch.index.name IS NOT NULL\n| WHERE NOT elasticsearch.index.name LIKE \".kibana*\"\n| WHERE NOT elasticsearch.index.name LIKE \".security*\"\n| WHERE NOT elasticsearch.index.name LIKE \".inference*\"\n| WHERE NOT elasticsearch.index.name LIKE \".secrets*\"\n| WHERE NOT elasticsearch.index.name LIKE \".monitoring*\"\n| WHERE NOT elasticsearch.index.name LIKE \".ilm-history*\"\n| WHERE NOT elasticsearch.index.name LIKE \".logs-elasticsearch*\"\n| WHERE NOT elasticsearch.index.name LIKE \".kibana_task_manager*\"\n| WHERE (?cluster_name == \"\" OR elasticsearch.cluster.name == ?cluster_name)\n| STATS log_events = COUNT(*), datasets = COUNT_DISTINCT(event.dataset), last_activity = MAX(@timestamp) BY elasticsearch.index.name, elasticsearch.cluster.name\n| SORT log_events DESC\n| LIMIT 50"
+  },
+  "description": "Discover application indices that have appeared in the Elasticsearch log stream over the lookback window. Returns only indices with log activity (ILM events, mapper events, errors, audit actions) — excludes Kibana, security, and other internal system indices.",
+  "id": "app-index-triage-active-log-indices",
+  "tags": [
+    "app-index-triage",
+    "application",
+    "observability",
+    "stack-monitoring"
+  ],
+  "type": "esql"
+}

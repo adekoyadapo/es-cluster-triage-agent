@@ -14,7 +14,7 @@
         "type": "string"
       }
     },
-    "query": "FROM elastic-cloud-logs-8\n| WHERE @timestamp >= NOW() - TO_TIMEDURATION(?lookback)\n| WHERE event.dataset == \"elasticsearch.deprecation\"\n| WHERE elasticsearch.index.name LIKE ?index_pattern\n| WHERE (?cluster_name == \"\" OR elasticsearch.cluster.name == ?cluster_name)\n| STATS count = COUNT(*) BY elasticsearch.cluster.name, elasticsearch.index.name, elasticsearch.deprecation.key, message\n| SORT count DESC\n| LIMIT 50"
+    "query": "FROM elastic-cloud-logs-8\n| WHERE @timestamp >= NOW() - TO_TIMEDURATION(?lookback)\n| WHERE event.dataset == \"elasticsearch.deprecation\"\n| WHERE elasticsearch.index.name LIKE ?index_pattern\n| WHERE (?cluster_name == \"\" OR elasticsearch.cluster.name == ?cluster_name)\n| STATS count = COUNT(*) BY elasticsearch.cluster.name, elasticsearch.index.name, message\n| SORT count DESC\n| LIMIT 50"
   },
   "description": "Find deprecation log entries scoped to the target index — covers deprecated mapping parameters, index settings, and API usage that will break on the next major upgrade.",
   "id": "app-index-triage-index_deprecation_warnings",
