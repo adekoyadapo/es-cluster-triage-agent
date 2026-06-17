@@ -1,0 +1,24 @@
+{
+  "configuration": {
+    "params": {
+      "cluster_name": {
+        "description": "Optional cluster name filter; use an empty string to query all clusters.",
+        "type": "string"
+      },
+      "lookback": {
+        "description": "Lookback window as ES|QL time span text (e.g. 15 minutes, 1 hour, 24 hours).",
+        "type": "string"
+      }
+    },
+    "query": "FROM .monitoring-es-*\n| WHERE @timestamp >= NOW() - TO_TIMEDURATION(?lookback)\n| WHERE metricset.name == \"index\"\n| WHERE elasticsearch.index.name LIKE \".ds-*\"\n| WHERE NOT elasticsearch.index.name LIKE \".ds-.logs-elasticsearch*\"\n| WHERE NOT elasticsearch.index.name LIKE \".ds-.monitoring*\"\n| WHERE NOT elasticsearch.index.name LIKE \".ds-.kibana*\"\n| WHERE NOT elasticsearch.index.name LIKE \".ds-.security*\"\n| WHERE NOT elasticsearch.index.name LIKE \".ds-.ilm-history*\"\n| WHERE (?cluster_name == \"\" OR elasticsearch.cluster.name == ?cluster_name)\n| EVAL ds_name = SUBSTRING(elasticsearch.index.name, 5, LENGTH(elasticsearch.index.name) - 22)\n| STATS backing_indices = COUNT_DISTINCT(elasticsearch.index.name), max_segments = MAX(elasticsearch.index.total.segments.count), max_docs_per_backing = MAX(elasticsearch.index.total.docs.count), last_activity = MAX(@timestamp) BY ds_name, elasticsearch.cluster.name\n| SORT backing_indices DESC\n| LIMIT 30"
+  },
+  "description": "Discover application data streams visible in the monitoring stream by grouping .ds-* backing indices back to their parent data stream name. Returns backing index count, max segment count, and last activity per stream. Use this instead of app-index-triage-active-log-indices when the target is a data stream — backing indices do not generate log events and will not appear in the log-based discovery tool.",
+  "id": "app-index-triage-active-ds-indices",
+  "tags": [
+    "app-index-triage",
+    "application",
+    "observability",
+    "stack-monitoring"
+  ],
+  "type": "esql"
+}

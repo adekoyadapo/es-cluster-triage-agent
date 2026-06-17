@@ -10,6 +10,7 @@
   ],
   "tool_files": [
     "tools/app_active_log_indices.json",
+    "tools/app_active_ds_indices.json",
     "tools/index_status_summary.json",
     "tools/index_unassigned_events.json",
     "tools/index_recovery_events.json",
