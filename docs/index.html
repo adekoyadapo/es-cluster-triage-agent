@@ -1406,9 +1406,73 @@ FROM .monitoring-es-*
 </div>
 
 <!-- ═══════════════════════════════════════════════════════════════════════
-     SLIDE 11 — TAKEAWAYS
+     SLIDE 11 — OPTIONAL: APPLICATION INDEX TRIAGE AGENT
      ══════════════════════════════════════════════════════════════════════ -->
-<div class="slide s-takeaways" data-slide="11">
+<div class="slide s-skills" data-slide="11">
+  <div class="section-kicker">Optional Agent</div>
+  <h2>Application Index Triage — drill into a specific index or data stream</h2>
+  <p style="max-width:760px;margin-bottom:14px">
+    A second optional agent persona (<code>app-index-triage-agent</code>) deployed alongside the cluster agent.
+    Use it when a symptom or alert names a <strong>specific index or data stream</strong> — the cluster agent answers at the wrong altitude for per-index problems.
+    It reuses the same monitoring and log datastreams; no extra credentials or patterns needed.
+  </p>
+
+  <div class="two-col" style="gap:18px">
+    <div>
+      <div class="card" style="margin-bottom:12px">
+        <h3>5 local skills + built-in observability</h3>
+        <table style="width:100%;font-size:.82rem;margin-top:6px">
+          <thead><tr><th>Skill</th><th>Investigates</th></tr></thead>
+          <tbody>
+            <tr><td>Index Health &amp; Allocation</td><td style="color:var(--el-muted)">Unassigned shards, recovery stalls, shard-limit blocks</td></tr>
+            <tr><td>Mapping &amp; Schema</td><td style="color:var(--el-muted)">mapper_parsing_exception, total-fields limit, fielddata growth</td></tr>
+            <tr><td>Lifecycle &amp; Rollover</td><td style="color:var(--el-muted)">ILM step errors, rollover failures, broken write aliases</td></tr>
+            <tr><td>Ingestion Perf &amp; Slow Ops</td><td style="color:var(--el-muted)">Bulk rejections, slow-log latency, circuit-breaker trips</td></tr>
+            <tr><td>Audit &amp; Deprecations</td><td style="color:var(--el-muted)">access_denied spikes, admin actions, deprecation warnings</td></tr>
+          </tbody>
+        </table>
+        <div class="hbox" style="margin-top:10px;font-size:.82rem">
+          Built-in <strong>observability.investigation</strong> is also assigned — invoked proactively on performance degradation, not only on errors.
+        </div>
+      </div>
+
+      <div class="hbox green" style="margin:0">
+        <strong>Routing rule:</strong> symptom names an index → <code>app-index-triage-agent</code>.
+        Cluster-wide signal (heap, node loss, broad rejections) → <code>es-cluster-triage-agent</code>.
+      </div>
+    </div>
+
+    <div>
+      <div class="card" style="margin-bottom:12px">
+        <h3>16 tools — including 2 discovery tools</h3>
+        <div class="metric-row"><span><code>active-log-indices</code></span><span class="metric-val">Standard indices in the log stream</span></div>
+        <div class="metric-row"><span><code>active-ds-indices</code></span><span class="metric-val">Data streams via monitoring backing indices</span></div>
+        <div class="metric-row"><span>14 diagnostic tools</span><span class="metric-val">One per symptom category, all ES|QL</span></div>
+        <div class="hbox yellow" style="margin-top:10px;font-size:.82rem">
+          <strong>Data stream tip:</strong> backing indices are named <code>.ds-&lt;name&gt;-DATE-SEQ</code> —
+          pass <code>*&lt;name&gt;*</code> as the pattern so all backing indices match.
+        </div>
+      </div>
+
+      <div class="card">
+        <h3>Opt-in deploy at step 10</h3>
+        <div class="code-block">python3 install/install.py
+# Answer Yes at step 10 to deploy alongside the main agent
+
+# Re-deploy alone (skips steps 1–9):
+python3 install/install.py --optional-only</div>
+        <div class="metric-row" style="margin-top:8px;font-size:.81rem"><span>Space</span><span class="metric-val">Same or different Kibana space from main agent</span></div>
+        <div class="metric-row" style="font-size:.81rem"><span>Uninstall</span><span class="metric-val">Separate per-bundle confirmation</span></div>
+        <div class="metric-row" style="font-size:.81rem"><span>Live validation</span><span class="metric-val">Installer runs a discovery query + agent chat test</span></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════════════════════════════════════
+     SLIDE 12 — TAKEAWAYS
+     ══════════════════════════════════════════════════════════════════════ -->
+<div class="slide s-takeaways" data-slide="12">
   <div class="section-kicker">Takeaways</div>
   <h2>Stack monitoring feeds the evidence.<br/>Skills shape the interpretation.<br/>MCP and Workflows close the loop.</h2>
 
@@ -1520,13 +1584,14 @@ FROM .monitoring-es-*
   <button class="snav-btn" data-slide="8"><span class="snav-num">08</span>MCP</button>
   <button class="snav-btn" data-slide="9"><span class="snav-num">09</span>MCP App</button>
   <button class="snav-btn" data-slide="10"><span class="snav-num">10</span>Workflows</button>
-  <button class="snav-btn" data-slide="11"><span class="snav-num">11</span>Takeaways</button>
+  <button class="snav-btn" data-slide="11"><span class="snav-num">11</span>Index Triage</button>
+  <button class="snav-btn" data-slide="12"><span class="snav-num">12</span>Takeaways</button>
 </div>
 
 <!-- ── Prev / Next / Theme / PPTX / PDF ──────────────────────────────────── -->
 <div class="nav">
   <button id="prevBtn" disabled>&#8592; Prev</button>
-  <span class="slide-counter" id="slideCounter">1 / 11</span>
+  <span class="slide-counter" id="slideCounter">1 / 12</span>
   <button id="nextBtn">Next &#8594;</button>
   <button class="theme-btn" id="themeBtn" title="Toggle light / dark theme"></button>
   <button class="pdf-btn" id="fsBtn" title="Toggle fullscreen (F)">&#x26F6;</button>
