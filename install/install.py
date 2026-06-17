@@ -1706,7 +1706,7 @@ def _load_session_from_creds_file() -> tuple[dict[str, str], tuple[str, str], st
         creds["ES_USERNAME"] = ask("Elasticsearch username", "elastic")
         creds["ES_PASSWORD"] = ask_secret("Elasticsearch password")
     else:
-        creds["API_KEY"] = ask_secret("API Key (id:secret or encoded)", show_prefix=8)
+        creds["ES_API_KEY"] = ask_secret("API Key (id:secret or encoded)", show_prefix=8)
 
     hdr = build_auth_header(creds)
 
