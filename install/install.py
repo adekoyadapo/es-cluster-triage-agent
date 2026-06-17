@@ -1510,9 +1510,55 @@ def offer_optional_agents(
         info("Skipping — run the installer again to add it later")
         return
 
+    # ── Space selection for optional agent ────────────────────────────────────
+    kb_url = creds["KB_URL"]
+    print(f"\n  {c(CYAN, 'Target Kibana space for the optional agent')}")
+    print(f"  {c(DIM, 'Default is the main agent space. Enter a different space ID to deploy separately.')}")
+    try:
+        spaces = kibana_request(kb_url, hdr, "GET", "/api/spaces/space")
+        space_ids = [s.get("id") for s in spaces if s.get("id")]
+        if space_ids:
+            info(f"Available spaces: {', '.join(space_ids)}")
+    except RuntimeError:
+        pass
+
+    opt_namespace = ask("Space ID for optional agent", namespace).strip()
+    if not opt_namespace:
+        opt_namespace = namespace
+
+    if not re.match(r'^[a-z0-9][a-z0-9\-]*$', opt_namespace):
+        warn(f"Invalid space ID '{opt_namespace}' — falling back to '{namespace}'")
+        opt_namespace = namespace
+    elif opt_namespace != "default" and opt_namespace != namespace:
+        existing = get_if_exists(kb_url, hdr, f"/api/spaces/space/{opt_namespace}")
+        if existing:
+            ok(f"Space '{opt_namespace}' exists")
+        else:
+            warn(f"Space '{opt_namespace}' does not exist")
+            if confirm(f"Create space '{opt_namespace}'?", True):
+                try:
+                    kibana_request(kb_url, hdr, "POST", "/api/spaces/space", body={
+                        "id": opt_namespace,
+                        "name": opt_namespace.replace("-", " ").title(),
+                        "description": "Application Index Triage Agent",
+                        "color": "#00BFB3",
+                    })
+                    ok(f"Space '{opt_namespace}' created")
+                except RuntimeError as exc:
+                    warn(f"Could not create space: {exc} — deploying to '{namespace}' instead")
+                    opt_namespace = namespace
+            else:
+                info(f"Using existing space '{namespace}' instead")
+                opt_namespace = namespace
+
+    if opt_namespace != namespace:
+        info(f"Optional agent deploying to space: {c(BOLD, opt_namespace)} (main agent is in '{namespace}')")
+    else:
+        info(f"Deploying optional agent to the same space: {c(BOLD, opt_namespace)}")
+
     try:
         deploy_optional_bundle(
-            creds, hdr, namespace, ds_info,
+            creds, hdr, opt_namespace, ds_info,
             bundle_dir=optional_bundle_dir,
             agent_id="app-index-triage-agent",
             workflow_id_suffix="app-index-triage",
@@ -1523,7 +1569,11 @@ def offer_optional_agents(
         info("The main agent is unaffected. Run the installer again to retry the optional agent.")
         return
 
-    live_optional_agent_validation(creds, hdr, namespace, ds_info)
+    installed["optional_namespace"] = opt_namespace
+    INSTALLED_FILE.write_text(json.dumps(installed, indent=2))
+    INSTALLED_FILE.chmod(0o600)
+
+    live_optional_agent_validation(creds, hdr, opt_namespace, ds_info)
 
 
 # ── Optional: MCP app ──────────────────────────────────────────────────────────

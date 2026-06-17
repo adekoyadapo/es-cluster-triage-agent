@@ -252,6 +252,8 @@ def main() -> int:
     optional_skill_ids = installed.get("optional_skills", [])
     optional_agent_ids = installed.get("optional_agents", [])
     optional_workflow_ids = installed.get("optional_workflows", [])
+    # Optional agent may be in a different space than the main agent
+    opt_namespace = installed.get("optional_namespace", namespace)
 
     print(f"  {c(CYAN, 'Installed at:')} {installed.get('installed_at', 'unknown')}")
     print(f"  {c(CYAN, 'Kibana space:')} {namespace}")
@@ -275,7 +277,8 @@ def main() -> int:
     has_optional = bool(optional_tool_ids or optional_skill_ids or optional_agent_ids)
     if has_optional:
         print()
-        print(f"  {c(BOLD, 'Optional bundle (Application Index Triage Agent):')}")
+        space_note = f"  (space: {opt_namespace})" if opt_namespace != namespace else ""
+        print(f"  {c(BOLD, 'Optional bundle (Application Index Triage Agent):')}{c(DIM, space_note)}")
         print(f"  · {len(optional_tool_ids)} tools, {len(optional_skill_ids)} skills")
         for oid in optional_agent_ids:
             print(f"  · Agent: {oid}")
@@ -312,15 +315,16 @@ def main() -> int:
 
     # ── Optional bundle (remove first — depends on nothing) ───────────────────
     if remove_optional:
-        print(f"\n  {c(DIM, '── Optional bundle ──────────────────────────────')}")
+        opt_space_note = f" (space: {opt_namespace})" if opt_namespace != namespace else ""
+        print(f"\n  {c(DIM, f'── Optional bundle{opt_space_note} ──────────────────────────')}")
         for wid in optional_workflow_ids:
-            delete_item(kb_url, hdr, space_path(namespace, f"/api/workflows/workflow/{wid}"), f"workflow/{wid}")
+            delete_item(kb_url, hdr, space_path(opt_namespace, f"/api/workflows/workflow/{wid}"), f"workflow/{wid}")
         for oid in optional_agent_ids:
-            delete_item(kb_url, hdr, space_path(namespace, f"/api/agent_builder/agents/{oid}"), f"agent/{oid}")
+            delete_item(kb_url, hdr, space_path(opt_namespace, f"/api/agent_builder/agents/{oid}"), f"agent/{oid}")
         for skill_id in optional_skill_ids:
-            delete_item(kb_url, hdr, space_path(namespace, f"/api/agent_builder/skills/{skill_id}"), f"skill/{skill_id}")
+            delete_item(kb_url, hdr, space_path(opt_namespace, f"/api/agent_builder/skills/{skill_id}"), f"skill/{skill_id}")
         for tool_id in optional_tool_ids:
-            delete_item(kb_url, hdr, space_path(namespace, f"/api/agent_builder/tools/{tool_id}"), f"tool/{tool_id}")
+            delete_item(kb_url, hdr, space_path(opt_namespace, f"/api/agent_builder/tools/{tool_id}"), f"tool/{tool_id}")
         ok("Optional bundle removed")
     elif has_optional:
         info("Skipping optional bundle — keeping Application Index Triage Agent")
