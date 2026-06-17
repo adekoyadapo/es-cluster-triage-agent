@@ -132,7 +132,7 @@ def ask(prompt: str, default: str = "") -> str:
     return val or default
 
 
-def ask_secret(prompt: str) -> str:
+def ask_secret(prompt: str, show_prefix: int = 0) -> str:
     try:
         val = getpass.getpass(f"\n  {c(BOLD, prompt)}: ")
     except (EOFError, KeyboardInterrupt):
@@ -140,12 +140,16 @@ def ask_secret(prompt: str) -> str:
         raise SystemExit(0)
     val = val.strip()
     if val:
+        if show_prefix and len(val) > show_prefix:
+            receipt = f"  {c(CYAN, val[:show_prefix])}{c(DIM, '••••••••')}  {c(DIM, '(received)')}"
+        else:
+            receipt = f"  {c(DIM, '••••••••')}  {c(DIM, '(received)')}"
         try:
             with open("/dev/tty", "w") as tty:
-                tty.write(f"  {c(DIM, '••••••••')}  {c(DIM, '(received)')}\n")
+                tty.write(receipt + "\n")
                 tty.flush()
         except OSError:
-            print(f"  {c(DIM, '••••••••')}  {c(DIM, '(received)')}", flush=True)
+            print(receipt, flush=True)
     return val
 
 
@@ -387,7 +391,7 @@ def collect_credentials() -> dict[str, str]:
         creds["ES_USERNAME"] = username
         creds["ES_PASSWORD"] = password
     else:
-        api_key = ask_secret("API Key (id:secret or encoded)")
+        api_key = ask_secret("API Key (id:secret or encoded)", show_prefix=8)
         creds["AUTH_TYPE"] = "apikey"
         creds["ES_API_KEY"] = api_key
 
@@ -923,7 +927,7 @@ def deploy_workflows(
 
     # Optional Slack connector
     if deployed_wfs and confirm("Add Slack notifications to the alert workflow?", False):
-        slack_webhook = ask_secret("Slack webhook URL")
+        slack_webhook = ask_secret("Slack webhook URL", show_prefix=30)
         if slack_webhook:
             try:
                 connector_id = provision_connector(kb_url, hdr, namespace, slack_webhook)
@@ -1645,7 +1649,7 @@ def _load_session_from_creds_file() -> tuple[dict[str, str], tuple[str, str], st
         creds["ES_USERNAME"] = ask("Elasticsearch username", "elastic")
         creds["ES_PASSWORD"] = ask_secret("Elasticsearch password")
     else:
-        creds["API_KEY"] = ask_secret("API Key (id:secret or encoded)")
+        creds["API_KEY"] = ask_secret("API Key (id:secret or encoded)", show_prefix=8)
 
     hdr = build_auth_header(creds)
 

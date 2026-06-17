@@ -155,27 +155,42 @@ The installer walks through 10 interactive steps:
 
 ## Optional: Application Index Triage Agent
 
-After the main agent is deployed and validated, the installer offers to deploy a second optional persona:
+After the main agent is deployed and validated, the installer offers to deploy a second optional persona (`app-index-triage-agent`):
 
-> **Application Index Triage Agent** — drills into a single application index to find ingestion failures, mapping issues, ILM stalls, slow operations, and audit events.
+> **Application Index Triage Agent** — drills into a single application index or data stream to find ingestion failures, mapping issues, ILM stalls, slow operations, and audit events.
 
 It reuses the same monitoring and log datastreams configured in step 5. No additional credentials or patterns are needed.
 
-**Skills included:**
+### 5 skills, 16 tools (including 2 discovery tools)
 
 | Skill | Investigates |
 |---|---|
-| Index Health & Allocation | Unassigned shards, recovery stalls, shard-limit blocks |
-| Mapping & Schema | `mapper_parsing_exception`, field-count explosion, dynamic mapping |
-| Lifecycle & Rollover | ILM step errors, rollover failures, broken write aliases |
-| Ingestion Performance & Slow Ops | Bulk rejections, indexing failures, slow-log latency, circuit breakers |
+| Index Health & Allocation | Unassigned shards (NODE_LEFT, NO_VALID_SHARD_COPY, ALLOCATION_FAILED), recovery stalls, shard-limit blocks |
+| Mapping & Schema | `mapper_parsing_exception`, total-fields limit, fielddata memory growth, dynamic mapping abuse |
+| Lifecycle & Rollover | ILM step errors, rollover failures, broken write aliases, DSL errors |
+| Ingestion Performance & Slow Ops | Bulk rejections, server-log ERROR/WARN spikes, slow-log latency, circuit-breaker trips |
 | Audit & Deprecations | `access_denied` spikes, admin actions (create/delete/put_mapping), deprecation warnings |
 
-Built-in `observability.investigation` is also available for service-level questions tied to the index.
+Two discovery tools help scope which index or data stream to investigate:
 
-To deploy without re-running the full installer, answer **Yes** at step 10. The optional agent deploys into the same Kibana space as the main agent and can be uninstalled together via `python3 install/uninstall.py`.
+- `app-index-triage-active-log-indices` — finds standard indices with recent `elasticsearch.*` log events (log-based)
+- `app-index-triage-active-ds-indices` — groups `.ds-*` backing indices back to their parent data stream name (monitoring-based)
 
-When the installer finishes it prints the direct Kibana URL to your deployed agent.
+Built-in `observability.investigation` is also assigned and triggered proactively on performance degradation (not only on errors).
+
+**Data stream support:** backing indices are named `.ds-<name>-YYYY.MM.DD-NNNNNN`. When investigating a data stream, use a wildcard pattern — e.g. `*lab-activity-ds*` — to match all backing indices across monitoring and log queries. `platform.core.get_index_mapping` is not used; Kibana is connected to the monitoring cluster, not the monitored application cluster, so all analysis is log and monitoring based.
+
+**Kibana space:** the installer lets you deploy the optional agent into a **different** Kibana space from the main agent. At step 10, after confirming deployment, the installer lists your available spaces and prompts for a space ID (defaulting to the same space as the main agent). Enter a new space ID to create it on the fly, or press Enter to accept the default.
+
+To re-deploy the optional agent without re-running the full installer:
+
+```bash
+python3 install/install.py --optional-only
+```
+
+The optional agent can be uninstalled independently — `python3 install/uninstall.py` asks separately whether to remove the main bundle and the optional bundle.
+
+When the installer finishes it prints the direct Kibana URL to the deployed agent.
 
 ---
 
