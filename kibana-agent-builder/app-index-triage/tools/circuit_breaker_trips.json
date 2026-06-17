@@ -14,7 +14,7 @@
         "type": "string"
       }
     },
-    "query": "FROM elastic-cloud-logs-8\n| WHERE @timestamp >= NOW() - TO_TIMEDURATION(?lookback)\n| WHERE event.dataset == \"elasticsearch.server\"\n| WHERE (error.type == \"circuit_breaking_exception\" OR message LIKE \"*circuit_breaking_exception*\" OR message LIKE \"*circuit breaker*tripped*\" OR message LIKE \"*CircuitBreakerException*\" OR message LIKE \"*field data*too large*\")\n| WHERE elasticsearch.index.name LIKE ?index_pattern\n| WHERE (?cluster_name == \"\" OR elasticsearch.cluster.name == ?cluster_name)\n| STATS count = COUNT(*) BY bucket = DATE_TRUNC(5 minutes, @timestamp), elasticsearch.cluster.name, elasticsearch.index.name, error.type\n| SORT bucket DESC, count DESC\n| LIMIT 50"
+    "query": "FROM elastic-cloud-logs-8\n| WHERE @timestamp >= NOW() - TO_TIMEDURATION(?lookback)\n| WHERE event.dataset == \"elasticsearch.server\"\n| WHERE (message LIKE \"*circuit_breaking_exception*\" OR message LIKE \"*CircuitBreakerException*\" OR message LIKE \"*circuit breaker*\" OR message LIKE \"*field data*too large*\")\n| WHERE elasticsearch.index.name LIKE ?index_pattern\n| WHERE (?cluster_name == \"\" OR elasticsearch.cluster.name == ?cluster_name)\n| STATS count = COUNT(*) BY bucket = DATE_TRUNC(5 minutes, @timestamp), elasticsearch.cluster.name, elasticsearch.index.name, log.level\n| SORT bucket DESC, count DESC\n| LIMIT 50"
   },
   "description": "Find circuit-breaker trips (field data, request, in-flight) from the server log associated with the target index.",
   "id": "app-index-triage-circuit_breaker_trips",
