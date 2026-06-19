@@ -1,9 +1,11 @@
 name: Application Index Triage Scheduled
-description: Runs application index-level triage on a schedule and produces an AI summary. Review results in Kibana Workflows execution history.
+description: Runs application index-level triage on a schedule, asks an agent to
+  summarize the findings, and posts the result to Slack.
 enabled: true
 tags: ["observability", "stack-monitoring", "application", "app-index-triage", "scheduled"]
 consts:
   default_metrics_pattern: "__METRICS_PATTERN__"
+  slack_connector_id: "__SLACK_CONNECTOR_ID__"
 triggers:
   - type: scheduled
     with:
@@ -36,20 +38,61 @@ steps:
     agent-id: "__AGENT_ID__"
     with:
       message: |
-        This is a scheduled application index health scan. Analyse the monitoring data below and identify any indices with high segment counts (>50 is concerning, >100 is critical) or high fielddata memory usage (>100MB).
+        This is a scheduled application index health scan. Analyse the monitoring data
+        below and produce an operator-friendly Slack status report.
 
-        For each index showing problems, use the appropriate skill to investigate further.
+        IMPORTANT FORMATTING RULES:
+        - Output Slack-formatted text only
+        - Use *bold* section headers
+        - Use bullet lists
+        - Use triple-backtick code blocks for metrics/evidence
+        - Do NOT use markdown headers (#, ##, ###)
+        - Do NOT use markdown tables
+        - Do NOT use horizontal separators (---)
+        - Keep output concise and highly scannable
+        - Keep lines short
+        - Do not mention raw queries, tool names, or internal workflow details
+
+        Identify any indices with high segment counts (>50 is concerning, >100 is
+        critical) or high fielddata memory usage (>100MB). For each index showing
+        problems, use the appropriate skill to investigate further.
         If all indices look healthy, confirm that clearly.
-        If there are concerns, identify the most likely issue per index and recommend next checks.
 
-        Return a Markdown report with these sections only:
-        Summary
-        Indices with issues (list each with: index name, most likely issue, evidence, recommended next checks)
-        Healthy indices (count only)
-        Time window
-        Confidence level
+        Required sections in this exact order:
+
+        *Summary*
+        - Short overview of findings across all scanned indices
+        - State whether any index shows active concern or potential risk
+
+        *Indices with issues*
+        - For each problematic index:
+          - Index name
+          - Most likely issue
+          - Key evidence (metrics in a triple-backtick code block)
+          - Recommended next checks
+        - If none, state "No indices with elevated metrics found"
+
+        *Healthy indices*
+        - Count only (e.g. "14 indices within normal bounds")
+
+        *Time window*
+        - Summarize the observation period
+
+        *Confidence level*
+        - Low / Medium / High
+        - Brief explanation why
 
         Metrics source: {{ consts.default_metrics_pattern }}
 
         Index health evidence:
         {{ steps.index_health_scan.output | json }}
+  - name: notify_slack
+    type: slack
+    connector-id: "{{ consts.slack_connector_id }}"
+    with:
+      message: |
+        Scheduled application index health check.
+
+        *Application index triage*
+
+        {{ steps.summarize.output.message }}

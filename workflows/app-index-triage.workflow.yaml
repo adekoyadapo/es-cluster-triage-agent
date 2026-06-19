@@ -1,9 +1,11 @@
 name: Application Index Triage Summary
-description: Triggers index-level triage when a Kibana alert fires. Queries the monitoring stream for the affected index and passes evidence to the Application Index Triage Agent.
+description: Triggers index-level triage when a Kibana alert fires, asks an agent
+  to summarize the findings, and posts the result to Slack.
 enabled: true
 tags: ["observability", "stack-monitoring", "application", "app-index-triage"]
 consts:
   default_metrics_pattern: "__METRICS_PATTERN__"
+  slack_connector_id: "__SLACK_CONNECTOR_ID__"
 triggers:
   - type: alert
 steps:
@@ -35,22 +37,58 @@ steps:
     agent-id: "__AGENT_ID__"
     with:
       message: |
-        Triage the Elasticsearch index issue using the workflow-collected evidence below.
+        Triage the Elasticsearch index issue using the workflow-collected evidence below
+        and produce an operator-friendly Slack incident summary.
 
-        The workflow already queried the monitoring stream for the affected index. Your job is to interpret the evidence and return a concise index-level triage report.
+        IMPORTANT FORMATTING RULES:
+        - Output Slack-formatted text only
+        - Use *bold* section headers
+        - Use bullet lists
+        - Use triple-backtick code blocks for metrics/evidence
+        - Do NOT use markdown headers (#, ##, ###)
+        - Do NOT use markdown tables
+        - Do NOT use horizontal separators (---)
+        - Keep output concise and highly scannable
+        - Keep lines short
+        - Do not mention raw queries, tool names, or internal workflow details
+
         Use the appropriate skill for the symptom described in the alert.
-        Do not mention raw query text or tool names.
-        Focus on the most likely issue at the index level, what the evidence shows, and what should be checked next.
 
-        Return a Markdown report with these sections only:
-        Index
-        Summary
-        Most likely issue
-        Evidence
-        Impacted scope (index / shard / node)
-        Time window
-        Recommended next checks
-        Confidence level
+        Required sections in this exact order:
+
+        *Index*
+        - Name the affected index or data stream
+
+        *Summary*
+        - Short operational overview of the index issue
+        - State whether impact is active, imminent, or potential
+
+        *Most likely issue*
+        - Explain the likely root cause at the index level
+
+        *Evidence*
+        - Summarize the strongest signals
+        - Present index metrics inside a triple-backtick code block
+        - Example format:
+        ```text
+           Index                         Docs       Failed   Segments
+           logs-app.payments-default     1,204,332  12       87
+        ```
+
+        *Impacted scope*
+        - Index / shard / node affected
+        - If unknown, explicitly say "Scope unclear — further investigation needed"
+
+        *Time window*
+        - Summarize the observation period
+
+        *Recommended next checks*
+        - Provide short actionable investigation steps
+        - Prefer operational diagnostics over generic advice
+
+        *Confidence level*
+        - Low / Medium / High
+        - Brief explanation why
 
         Alert metadata:
         - alert_name: {{ event.name }}
@@ -61,3 +99,13 @@ steps:
 
         Index metrics evidence:
         {{ steps.index_metrics_summary.output | json }}
+  - name: notify_slack
+    type: slack
+    connector-id: "{{ consts.slack_connector_id }}"
+    with:
+      message: |
+        High-priority alert: {{ event.name }}.
+
+        *Application index triage*
+
+        {{ steps.summarize.output.message }}

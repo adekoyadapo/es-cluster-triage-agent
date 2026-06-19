@@ -913,10 +913,32 @@ def deploy_workflows(
     wf_choice = ask("Workflow type", "1").strip()
     deployed_wfs: list[str] = []
 
+    # Provision Slack connector first so the ID can be embedded in the workflow YAML
+    slack_connector_id = ""
+    if wf_choice != "4":
+        print(f"""
+  {c(CYAN, "Slack notifications")}
+  The workflows post triage summaries to a Slack channel via a webhook connector.
+  Enter your Slack webhook URL now to embed the connector in the workflow.
+  Leave blank to skip — you can add it manually in Kibana later.
+        """)
+        slack_webhook = ask_secret("Slack webhook URL (or leave blank to skip)", show_prefix=30)
+        if slack_webhook:
+            try:
+                slack_connector_id = provision_connector(kb_url, hdr, namespace, slack_webhook)
+                installed["connector_id"] = slack_connector_id
+                ok(f"Slack connector ready: {slack_connector_id}")
+            except RuntimeError as exc:
+                warn(f"Slack connector failed: {exc}")
+                info("Workflows will deploy without a Slack step — add it manually in Kibana")
+        else:
+            info("Skipping Slack — workflows will deploy without a notification step")
+
     def render_template(template_path: Path) -> str:
         yaml = template_path.read_text()
         yaml = yaml.replace("__METRICS_PATTERN__", monitoring_ds)
         yaml = yaml.replace("__AGENT_ID__", deployed_agent_id)
+        yaml = yaml.replace("__SLACK_CONNECTOR_ID__", slack_connector_id)
         return yaml
 
     def deploy_and_verify_workflow(wf_id: str, yaml_text: str, wf_name: str) -> bool:
@@ -982,23 +1004,12 @@ def deploy_workflows(
     if deployed_wfs:
         installed["workflows"] = deployed_wfs
 
-    # Optional Slack connector
-    if deployed_wfs and confirm("Add Slack notifications to the alert workflow?", False):
-        slack_webhook = ask_secret("Slack webhook URL", show_prefix=30)
-        if slack_webhook:
-            try:
-                connector_id = provision_connector(kb_url, hdr, namespace, slack_webhook)
-                installed["connector_id"] = connector_id
-                ok(f"Slack connector created: {connector_id}")
-                info("To add Slack to the workflow: edit it in Kibana and add a Slack step")
-                info(f"Use connector ID: {connector_id}")
-            except RuntimeError as exc:
-                warn(f"Slack connector failed: {exc}")
-
     # Persist updated manifest
     INSTALLED_FILE.write_text(json.dumps(installed, indent=2))
     INSTALLED_FILE.chmod(0o600)
     log(f"Install manifest updated with workflows: {deployed_wfs}")
+    if slack_connector_id:
+        info(f"Slack connector ID: {slack_connector_id} (embedded in workflow YAML)")
 
 
 # ── [8] Verify ─────────────────────────────────────────────────────────────────
@@ -1431,10 +1442,30 @@ def deploy_optional_bundle(
     wf_choice = ask("Workflow type", "1").strip()
     deployed_wfs: list[str] = []
 
+    # Provision Slack connector for optional agent workflows
+    opt_slack_connector_id = ""
+    if wf_choice != "4":
+        print(f"""
+  {c(CYAN, "Slack notifications for optional agent")}
+  Enter the Slack webhook URL to embed a Slack step in the optional agent workflows.
+  Leave blank to skip (you can add it manually in Kibana later).
+        """)
+        opt_slack_webhook = ask_secret("Slack webhook URL (or leave blank to skip)", show_prefix=30)
+        if opt_slack_webhook:
+            try:
+                opt_slack_connector_id = provision_connector(kb_url, hdr, namespace, opt_slack_webhook)
+                installed["optional_connector_id"] = opt_slack_connector_id
+                ok(f"Slack connector ready: {opt_slack_connector_id}")
+            except RuntimeError as exc:
+                warn(f"Slack connector failed: {exc}")
+        else:
+            info("Skipping Slack — optional agent workflows will deploy without a notification step")
+
     def render(template_path: Path) -> str:
         yaml = template_path.read_text()
         yaml = yaml.replace("__METRICS_PATTERN__", monitoring_ds)
         yaml = yaml.replace("__AGENT_ID__", deployed_agent_id)
+        yaml = yaml.replace("__SLACK_CONNECTOR_ID__", opt_slack_connector_id)
         return yaml
 
     sp_prefix = f"{namespace}-" if namespace != "default" else ""
