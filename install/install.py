@@ -906,11 +906,11 @@ def deploy_workflows(
 
   {c(DIM, '1')} {c(BOLD, 'Alert trigger')}    — runs when a Kibana alert fires (e.g. cluster health rule)
   {c(DIM, '2')} {c(BOLD, 'Scheduled')}        — runs on a fixed interval (hourly/daily health check)
-  {c(DIM, '3')} {c(BOLD, 'Both')}             — deploy alert + scheduled variants
+  {c(DIM, '3')} {c(BOLD, 'Both')}             — deploy alert + scheduled variants {c(GREEN, '(recommended)')}
   {c(DIM, '4')} {c(BOLD, 'Skip')}             — deploy agent only, no workflow
     """)
 
-    wf_choice = ask("Workflow type", "1").strip()
+    wf_choice = ask("Workflow type", "3").strip()
     deployed_wfs: list[str] = []
 
     # Provision Slack connector first so the ID can be embedded in the workflow YAML
@@ -1435,11 +1435,11 @@ def deploy_optional_bundle(
   {c(CYAN, "Workflow Options")}
   {c(DIM, '1')} {c(BOLD, 'Alert trigger')}    — runs when a Kibana alert fires
   {c(DIM, '2')} {c(BOLD, 'Scheduled')}        — runs on a fixed interval
-  {c(DIM, '3')} {c(BOLD, 'Both')}             — deploy both variants
+  {c(DIM, '3')} {c(BOLD, 'Both')}             — deploy both variants {c(GREEN, '(recommended)')}
   {c(DIM, '4')} {c(BOLD, 'Skip')}             — agent only, no workflow
     """)
 
-    wf_choice = ask("Workflow type", "1").strip()
+    wf_choice = ask("Workflow type", "3").strip()
     deployed_wfs: list[str] = []
 
     # Provision Slack connector for optional agent workflows
