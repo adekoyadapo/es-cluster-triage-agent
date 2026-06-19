@@ -59,7 +59,7 @@ def build_ds_info(creds: dict[str, str]) -> dict:
     """Replicate the non-interactive core of collect_and_validate_datastreams."""
     es_url = creds["ES_URL"]
     monitoring_ds = ".monitoring-es-*"
-    log_ds = "elastic-cloud-logs-8"
+    log_ds = "filebeat-*"
     monitoring_alias = "es-monitoring"
     log_alias = "elastic-cloud-logs-8"
 
@@ -113,9 +113,30 @@ def build_ds_info(creds: dict[str, str]) -> dict:
         except RuntimeError:
             pass
 
-    # Log alias — elastic-cloud-logs-8 is the alias name itself, no creation needed
-    log_alias_created = True
-    _ins.ok(f"Log pattern is '{log_alias}' — no alias needed")
+    # Log alias — create it pointing to the log_ds pattern
+    log_alias_created = False
+    if log_ds == log_alias:
+        _ins.ok(f"Log pattern is '{log_alias}' — no alias needed")
+        log_alias_created = True
+    else:
+        _ins.info(f"Creating alias '{log_alias}' → {log_ds}")
+        try:
+            _ins.es_request(es_url, hdr, "POST", "/_aliases", body={
+                "actions": [{"add": {"index": log_ds, "alias": log_alias, "is_write_index": False}}]
+            }, timeout=20)
+            _ins.ok(f"Alias '{log_alias}' → {log_ds}")
+            log_alias_created = True
+        except RuntimeError as exc:
+            exc_str = str(exc)
+            if "already" in exc_str.lower() or ("HTTP 400" in exc_str and "alias" in exc_str.lower()):
+                _ins.ok(f"Alias '{log_alias}' already exists")
+                log_alias_created = True
+            elif "index_not_found" in exc_str.lower():
+                _ins.info(f"No index matching '{log_ds}' — alias skipped, tools will query pattern directly")
+            elif "HTTP 403" in exc_str:
+                _ins.info(f"Alias skipped — API key lacks manage privilege")
+            else:
+                _ins.info(f"Alias skipped: {exc_str[:120]}")
 
     return {
         "monitoring_ds": monitoring_ds,

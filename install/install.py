@@ -575,14 +575,14 @@ def collect_and_validate_datastreams(
   Error log and security audit tools query log data.
 
   Common patterns:
-    {c(DIM, '.monitoring-es-*')}          Same stream as monitoring (contains logs too)
-    {c(DIM, 'logs-elasticsearch.*')}      Elastic Agent filebeat integration
-    {c(DIM, '.logs-endpoint.*')}          Endpoint security logs
+    {c(DIM, 'filebeat-*')}               Filebeat Elasticsearch module — {c(GREEN, 'recommended default')}
+    {c(DIM, 'logs-elasticsearch.*')}     Elastic Agent Elasticsearch integration
+    {c(DIM, '.monitoring-es-*')}         Same stream as monitoring (contains logs too)
 
-  Leave blank to use the same pattern as monitoring.""")
+  Leave blank to use the default: {c(BOLD, 'filebeat-*')}""")
 
-    log_ds_input = ask("Log datastream/index pattern (blank = same as monitoring)").strip()
-    log_ds = log_ds_input if log_ds_input else monitoring_ds
+    log_ds_input = ask("Log datastream/index pattern", "filebeat-*").strip()
+    log_ds = log_ds_input if log_ds_input else "filebeat-*"
 
     ok(f"Monitoring: {monitoring_ds}")
     if log_ds != monitoring_ds:
@@ -660,7 +660,7 @@ def collect_and_validate_datastreams(
     log_alias = "elastic-cloud-logs-8"
     log_alias_created = False
 
-    if log_ds == "elastic-cloud-logs-8":
+    if log_ds == log_alias:
         ok(f"Log pattern is '{log_alias}' — no alias needed")
         log_alias_created = True
     else:

@@ -222,20 +222,33 @@ def main() -> int:
     print(c(CYAN, "╚══════════════════════════════════════════════════════════════╝"))
     print()
 
-    if not INSTALLED_FILE.exists():
-        err(f"Install manifest not found: {INSTALLED_FILE}")
-        err("Nothing to uninstall — run install.py first.")
+    installed: dict[str, Any] = {}
+    if INSTALLED_FILE.exists():
+        try:
+            installed = json.loads(INSTALLED_FILE.read_text())
+        except Exception as exc:
+            warn(f"Could not read install manifest: {exc}")
+    else:
+        warn(f"Install manifest not found: {INSTALLED_FILE}")
+        warn("Will attempt cleanup using saved credentials and known ID patterns.")
+
+    # Fall back to .credentials.local for kb_url / namespace when manifest is sparse
+    creds_fallback: dict[str, Any] = {}
+    if CREDS_FILE.exists():
+        try:
+            creds_fallback = json.loads(CREDS_FILE.read_text())
+        except Exception:
+            pass
+
+    namespace = installed.get("namespace") or creds_fallback.get("namespace", "default")
+    kb_url = installed.get("kb_url") or creds_fallback.get("kb_url", "")
+    es_url = installed.get("es_url") or creds_fallback.get("es_url", "")
+
+    if not kb_url:
+        err("Kibana URL not found in manifest or credentials file.")
+        err("Cannot connect to Kibana to remove workflows.")
         return 1
 
-    try:
-        installed = json.loads(INSTALLED_FILE.read_text())
-    except Exception as exc:
-        err(f"Could not read install manifest: {exc}")
-        return 1
-
-    namespace = installed.get("namespace", "default")
-    kb_url = installed.get("kb_url", "")
-    es_url = installed.get("es_url", "")
     tool_ids = installed.get("tools", [])
     skill_ids = installed.get("skills", [])
     agent_id = installed.get("agent_id")
@@ -254,6 +267,28 @@ def main() -> int:
     optional_workflow_ids = installed.get("optional_workflows", [])
     # Optional agent may be in a different space than the main agent
     opt_namespace = installed.get("optional_namespace", namespace)
+
+    hdr = build_auth_header(creds_fallback)
+
+    # ── Probe for any workflow IDs not recorded in the manifest ──────────────
+    # Catches stale deployments, out-of-band runs, and manifest-missing scenarios.
+    sp = f"{namespace}-" if namespace != "default" else ""
+    for wid in [f"{sp}es-triage-alert", f"{sp}es-triage-scheduled"]:
+        if wid not in workflow_ids:
+            try:
+                if kibana_request(kb_url, hdr, "GET", space_path(namespace, f"/api/workflows/workflow/{wid}")):
+                    workflow_ids.append(wid)
+            except RuntimeError:
+                pass
+
+    opt_sp = f"{opt_namespace}-" if opt_namespace != "default" else ""
+    for wid in [f"{opt_sp}app-index-triage-alert", f"{opt_sp}app-index-triage-scheduled"]:
+        if wid not in optional_workflow_ids:
+            try:
+                if kibana_request(kb_url, hdr, "GET", space_path(opt_namespace, f"/api/workflows/workflow/{wid}")):
+                    optional_workflow_ids.append(wid)
+            except RuntimeError:
+                pass
 
     print(f"  {c(CYAN, 'Installed at:')} {installed.get('installed_at', 'unknown')}")
     print(f"  {c(CYAN, 'Kibana space:')} {namespace}")
@@ -274,7 +309,7 @@ def main() -> int:
         print(f"  · ES alias: {log_alias}")
 
     # ── Optional bundle summary ───────────────────────────────────────────────
-    has_optional = bool(optional_tool_ids or optional_skill_ids or optional_agent_ids)
+    has_optional = bool(optional_tool_ids or optional_skill_ids or optional_agent_ids or optional_workflow_ids)
     if has_optional:
         print()
         space_note = f"  (space: {opt_namespace})" if opt_namespace != namespace else ""
@@ -299,16 +334,6 @@ def main() -> int:
         remove_optional = confirm(
             "Remove optional Application Index Triage Agent bundle?", False
         )
-
-    # Build auth header
-    creds_data: dict[str, Any] = {}
-    if CREDS_FILE.exists():
-        try:
-            creds_data = json.loads(CREDS_FILE.read_text())
-        except Exception:
-            pass
-
-    hdr = build_auth_header(creds_data)
 
     print()
     print(c(BOLD, "  Removing deployment..."))
