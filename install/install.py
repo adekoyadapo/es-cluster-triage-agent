@@ -741,6 +741,15 @@ class WorkflowPermissionError(Exception):
     """Raised when the API key lacks workflow management privileges."""
 
 
+def strip_slack_from_yaml(yaml_text: str) -> str:
+    """Remove the Slack connector const and notify_slack step when no webhook is configured."""
+    # Remove the slack_connector_id const line
+    yaml_text = re.sub(r"\n  slack_connector_id:.*", "", yaml_text)
+    # Remove the notify_slack step — it is always the last step, so cut from its header to EOF
+    yaml_text = re.sub(r"\n  - name: notify_slack\n.*", "", yaml_text, flags=re.DOTALL)
+    return yaml_text
+
+
 def deploy_workflow_yaml(
     kb_url: str, hdr: tuple[str, str], namespace: str,
     workflow_id: str, yaml_text: str, wf_name: str = "",
@@ -906,11 +915,11 @@ def deploy_workflows(
 
   {c(DIM, '1')} {c(BOLD, 'Alert trigger')}    — runs when a Kibana alert fires (e.g. cluster health rule)
   {c(DIM, '2')} {c(BOLD, 'Scheduled')}        — runs on a fixed interval (hourly/daily health check)
-  {c(DIM, '3')} {c(BOLD, 'Both')}             — deploy alert + scheduled variants {c(GREEN, '(recommended)')}
+  {c(DIM, '3')} {c(BOLD, 'Both')}             — deploy alert + scheduled variants
   {c(DIM, '4')} {c(BOLD, 'Skip')}             — deploy agent only, no workflow
     """)
 
-    wf_choice = ask("Workflow type", "3").strip()
+    wf_choice = ask("Workflow type", "1").strip()
     deployed_wfs: list[str] = []
 
     # Provision Slack connector first so the ID can be embedded in the workflow YAML
@@ -938,7 +947,10 @@ def deploy_workflows(
         yaml = template_path.read_text()
         yaml = yaml.replace("__METRICS_PATTERN__", monitoring_ds)
         yaml = yaml.replace("__AGENT_ID__", deployed_agent_id)
-        yaml = yaml.replace("__SLACK_CONNECTOR_ID__", slack_connector_id)
+        if slack_connector_id:
+            yaml = yaml.replace("__SLACK_CONNECTOR_ID__", slack_connector_id)
+        else:
+            yaml = strip_slack_from_yaml(yaml)
         return yaml
 
     def deploy_and_verify_workflow(wf_id: str, yaml_text: str, wf_name: str) -> bool:
@@ -1435,11 +1447,11 @@ def deploy_optional_bundle(
   {c(CYAN, "Workflow Options")}
   {c(DIM, '1')} {c(BOLD, 'Alert trigger')}    — runs when a Kibana alert fires
   {c(DIM, '2')} {c(BOLD, 'Scheduled')}        — runs on a fixed interval
-  {c(DIM, '3')} {c(BOLD, 'Both')}             — deploy both variants {c(GREEN, '(recommended)')}
+  {c(DIM, '3')} {c(BOLD, 'Both')}             — deploy both variants
   {c(DIM, '4')} {c(BOLD, 'Skip')}             — agent only, no workflow
     """)
 
-    wf_choice = ask("Workflow type", "3").strip()
+    wf_choice = ask("Workflow type", "1").strip()
     deployed_wfs: list[str] = []
 
     # Provision Slack connector for optional agent workflows
@@ -1465,7 +1477,10 @@ def deploy_optional_bundle(
         yaml = template_path.read_text()
         yaml = yaml.replace("__METRICS_PATTERN__", monitoring_ds)
         yaml = yaml.replace("__AGENT_ID__", deployed_agent_id)
-        yaml = yaml.replace("__SLACK_CONNECTOR_ID__", opt_slack_connector_id)
+        if opt_slack_connector_id:
+            yaml = yaml.replace("__SLACK_CONNECTOR_ID__", opt_slack_connector_id)
+        else:
+            yaml = strip_slack_from_yaml(yaml)
         return yaml
 
     sp_prefix = f"{namespace}-" if namespace != "default" else ""

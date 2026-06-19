@@ -28,6 +28,13 @@ sys.path.insert(0, str(INSTALL_DIR))
 
 import install as _ins
 
+
+def strip_slack_from_yaml(yaml_text: str) -> str:
+    import re
+    yaml_text = re.sub(r"\n  slack_connector_id:.*", "", yaml_text)
+    yaml_text = re.sub(r"\n  - name: notify_slack\n.*", "", yaml_text, flags=re.DOTALL)
+    return yaml_text
+
 DEFAULT_VALUES_FILE = ROOT / "values.txt"
 
 
@@ -153,7 +160,10 @@ def deploy_main_workflows(
         yaml = template_path.read_text()
         yaml = yaml.replace("__METRICS_PATTERN__", ds_info["monitoring_ds"])
         yaml = yaml.replace("__AGENT_ID__", deployed_agent_id)
-        yaml = yaml.replace("__SLACK_CONNECTOR_ID__", slack_connector_id)
+        if slack_connector_id:
+            yaml = yaml.replace("__SLACK_CONNECTOR_ID__", slack_connector_id)
+        else:
+            yaml = strip_slack_from_yaml(yaml)
         return yaml
 
     # Alert workflow
@@ -296,7 +306,10 @@ def deploy_optional_bundle_silent(
         yaml = template_path.read_text()
         yaml = yaml.replace("__METRICS_PATTERN__", ds_info["monitoring_ds"])
         yaml = yaml.replace("__AGENT_ID__", deployed_agent_id)
-        yaml = yaml.replace("__SLACK_CONNECTOR_ID__", slack_connector_id)
+        if slack_connector_id:
+            yaml = yaml.replace("__SLACK_CONNECTOR_ID__", slack_connector_id)
+        else:
+            yaml = strip_slack_from_yaml(yaml)
         return yaml
 
     sp_prefix = f"{namespace}-" if namespace != "default" else ""
