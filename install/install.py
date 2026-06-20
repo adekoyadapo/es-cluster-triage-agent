@@ -754,9 +754,23 @@ def deploy_workflow_yaml(
     kb_url: str, hdr: tuple[str, str], namespace: str,
     workflow_id: str, yaml_text: str, wf_name: str = "",
 ) -> None:
-    """POST first, fall back to PUT on 409 (Kibana workflow IDs are globally unique).
+    """Delete-then-POST to bypass Kibana's soft-delete tombstone (which causes
+    409 on re-create after uninstall).  Falls back to PUT if POST still 409s.
     Raises WorkflowPermissionError on 403 so callers can handle gracefully."""
     wf_path = space_path(namespace, f"/api/workflows/workflow/{workflow_id}")
+
+    # Kibana soft-deletes workflows: DELETE returns 200 but the ID stays
+    # tombstoned, so a fresh POST always hits 409.  Pre-delete to clear the
+    # tombstone, then POST a clean record.
+    try:
+        kibana_request(kb_url, hdr, "DELETE", wf_path)
+        log(f"  Pre-deleted existing workflow: {workflow_id}")
+    except RuntimeError as del_exc:
+        del_str = str(del_exc)
+        if "HTTP 403" in del_str:
+            raise WorkflowPermissionError(del_str)
+        # 404 = not there yet, anything else we ignore and try POST anyway
+
     body: dict[str, Any] = {"id": workflow_id, "yaml": yaml_text}
     if wf_name:
         body["name"] = wf_name
@@ -768,7 +782,9 @@ def deploy_workflow_yaml(
             raise WorkflowPermissionError(exc_str)
         if "HTTP 409" not in exc_str:
             raise
-        put_body: dict[str, Any] = {"yaml": yaml_text}
+        # Still 409 after pre-delete — update in place and force enabled=true
+        # to escape any residual disabled state.
+        put_body: dict[str, Any] = {"yaml": yaml_text, "enabled": True}
         if wf_name:
             put_body["name"] = wf_name
         try:
@@ -909,6 +925,26 @@ def deploy_workflows(
     monitoring_ds = ds_info["monitoring_ds"]
     deployed_agent_id = installed.get("agent_id", AGENT_ID)
 
+    # Ask for Slack webhook BEFORE the workflow type menu so there are no
+    # unexpected prompts mid-choice.
+    print(f"""
+  {c(CYAN, "Slack notifications")}
+  Workflows can post triage summaries to a Slack channel via a webhook connector.
+  Enter your Slack webhook URL to enable, or leave blank to skip.
+    """)
+    slack_webhook = ask_secret("Slack webhook URL (or leave blank to skip)", show_prefix=30)
+    slack_connector_id = ""
+    if slack_webhook:
+        try:
+            slack_connector_id = provision_connector(kb_url, hdr, namespace, slack_webhook)
+            installed["connector_id"] = slack_connector_id
+            ok(f"Slack connector ready: {slack_connector_id}")
+        except RuntimeError as exc:
+            warn(f"Slack connector failed: {exc}")
+            info("Workflows will deploy without a Slack step — add it manually in Kibana")
+    else:
+        info("Skipping Slack — workflows will deploy without a notification step")
+
     print(f"""
   {c(CYAN, "Workflow Options")}
   Workflows trigger triage automatically and produce AI summaries.
@@ -922,27 +958,6 @@ def deploy_workflows(
     wf_choice = ask("Workflow type", "1").strip()
     deployed_wfs: list[str] = []
 
-    # Provision Slack connector first so the ID can be embedded in the workflow YAML
-    slack_connector_id = ""
-    if wf_choice != "4":
-        print(f"""
-  {c(CYAN, "Slack notifications")}
-  The workflows post triage summaries to a Slack channel via a webhook connector.
-  Enter your Slack webhook URL now to embed the connector in the workflow.
-  Leave blank to skip — you can add it manually in Kibana later.
-        """)
-        slack_webhook = ask_secret("Slack webhook URL (or leave blank to skip)", show_prefix=30)
-        if slack_webhook:
-            try:
-                slack_connector_id = provision_connector(kb_url, hdr, namespace, slack_webhook)
-                installed["connector_id"] = slack_connector_id
-                ok(f"Slack connector ready: {slack_connector_id}")
-            except RuntimeError as exc:
-                warn(f"Slack connector failed: {exc}")
-                info("Workflows will deploy without a Slack step — add it manually in Kibana")
-        else:
-            info("Skipping Slack — workflows will deploy without a notification step")
-
     def render_template(template_path: Path) -> str:
         yaml = template_path.read_text()
         yaml = yaml.replace("__METRICS_PATTERN__", monitoring_ds)
@@ -955,7 +970,7 @@ def deploy_workflows(
 
     def deploy_and_verify_workflow(wf_id: str, yaml_text: str, wf_name: str) -> bool:
         sp = f"/s/{namespace}" if namespace != "default" else ""
-        wf_ui_url = f"{kb_url}{sp}/app/management/insightsAndAlerting/triggersActionsConnectors/workflows"
+        wf_ui_url = f"{kb_url}{sp}/app/workflows"
         try:
             deploy_workflow_yaml(kb_url, hdr, namespace, wf_id, yaml_text, wf_name=wf_name)
         except WorkflowPermissionError:
@@ -1323,14 +1338,15 @@ def print_summary(creds: dict[str, str], namespace: str, ds_info: dict[str, str]
     print(f"""
   {c(GREEN + BOLD, "╔══ Installation Complete ══════════════════════════════════╗")}
 
-  {c(CYAN, "Agent URL:")}   {c(BOLD, space_url)}/app/agent_builder
-  {c(CYAN, "Space:")}       {namespace}
-  {c(CYAN, "Tools:")}       {len(installed_data.get('tools', []))} ES|QL triage tools
-  {c(CYAN, "Skills:")}      {len(installed_data.get('skills', []))} skill groups
-  {c(CYAN, "Agent:")}       {installed_data.get('agent_id', AGENT_ID)}
-  {c(CYAN, "Workflows:")}   {', '.join(wfs) if wfs else 'none (agent only)'}
-  {c(CYAN, "Monitoring:")}  {ds_info['monitoring_ds']} → alias: {ds_info['monitoring_alias']}
-  {c(CYAN, "Logs:")}        {ds_info['log_ds']} → alias: {ds_info['log_alias']}
+  {c(CYAN, "Agent URL:")}     {c(BOLD, space_url)}/app/agent_builder
+  {c(CYAN, "Workflows URL:")} {c(BOLD, space_url)}/app/workflows
+  {c(CYAN, "Space:")}         {namespace}
+  {c(CYAN, "Tools:")}         {len(installed_data.get('tools', []))} ES|QL triage tools
+  {c(CYAN, "Skills:")}        {len(installed_data.get('skills', []))} skill groups
+  {c(CYAN, "Agent:")}         {installed_data.get('agent_id', AGENT_ID)}
+  {c(CYAN, "Workflows:")}     {', '.join(wfs) if wfs else 'none (agent only)'}
+  {c(CYAN, "Monitoring:")}    {ds_info['monitoring_ds']} → alias: {ds_info['monitoring_alias']}
+  {c(CYAN, "Logs:")}          {ds_info['log_ds']} → alias: {ds_info['log_alias']}
 
   {c(CYAN, "Local files:")}
   · {INSTALLED_FILE}
@@ -1339,9 +1355,10 @@ def print_summary(creds: dict[str, str], namespace: str, ds_info: dict[str, str]
 
   {c(YELLOW, "Next steps:")}
   1. Open the agent in Kibana and ask a triage question
-  2. Connect the alert workflow to a Kibana monitoring rule
-  3. Run {c(BOLD, 'python3 install/verify.py')} to re-check deployment
-  4. Run {c(BOLD, 'python3 install/uninstall.py')} to remove everything
+  2. View workflows at the URL above (Kibana 9.3: enable via Stack Management → Advanced Settings → {c(BOLD, 'workflows:ui:enabled')})
+  3. Connect the alert workflow to a Kibana monitoring rule
+  4. Run {c(BOLD, 'python3 install/verify.py')} to re-check deployment
+  5. Run {c(BOLD, 'python3 install/uninstall.py')} to remove everything
     """)
 
 
@@ -1443,6 +1460,24 @@ def deploy_optional_bundle(
     alert_tmpl = ROOT / "workflows" / f"{workflow_id_suffix}.workflow.yaml"
     scheduled_tmpl = ROOT / "workflows" / f"{workflow_id_suffix}-scheduled.workflow.yaml"
 
+    # Ask for Slack webhook BEFORE the workflow type menu.
+    print(f"""
+  {c(CYAN, "Slack notifications for optional agent")}
+  Enter the Slack webhook URL to embed a Slack step in the optional agent workflows.
+  Leave blank to skip (you can add it manually in Kibana later).
+    """)
+    opt_slack_webhook = ask_secret("Slack webhook URL (or leave blank to skip)", show_prefix=30)
+    opt_slack_connector_id = ""
+    if opt_slack_webhook:
+        try:
+            opt_slack_connector_id = provision_connector(kb_url, hdr, namespace, opt_slack_webhook)
+            installed["optional_connector_id"] = opt_slack_connector_id
+            ok(f"Slack connector ready: {opt_slack_connector_id}")
+        except RuntimeError as exc:
+            warn(f"Slack connector failed: {exc}")
+    else:
+        info("Skipping Slack — optional agent workflows will deploy without a notification step")
+
     print(f"""
   {c(CYAN, "Workflow Options")}
   {c(DIM, '1')} {c(BOLD, 'Alert trigger')}    — runs when a Kibana alert fires
@@ -1453,25 +1488,6 @@ def deploy_optional_bundle(
 
     wf_choice = ask("Workflow type", "1").strip()
     deployed_wfs: list[str] = []
-
-    # Provision Slack connector for optional agent workflows
-    opt_slack_connector_id = ""
-    if wf_choice != "4":
-        print(f"""
-  {c(CYAN, "Slack notifications for optional agent")}
-  Enter the Slack webhook URL to embed a Slack step in the optional agent workflows.
-  Leave blank to skip (you can add it manually in Kibana later).
-        """)
-        opt_slack_webhook = ask_secret("Slack webhook URL (or leave blank to skip)", show_prefix=30)
-        if opt_slack_webhook:
-            try:
-                opt_slack_connector_id = provision_connector(kb_url, hdr, namespace, opt_slack_webhook)
-                installed["optional_connector_id"] = opt_slack_connector_id
-                ok(f"Slack connector ready: {opt_slack_connector_id}")
-            except RuntimeError as exc:
-                warn(f"Slack connector failed: {exc}")
-        else:
-            info("Skipping Slack — optional agent workflows will deploy without a notification step")
 
     def render(template_path: Path) -> str:
         yaml = template_path.read_text()
