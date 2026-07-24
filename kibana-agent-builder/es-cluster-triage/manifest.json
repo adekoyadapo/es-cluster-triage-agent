@@ -27,6 +27,7 @@
     "tools/ilm_stuck_indices.json",
     "tools/slow_index_queries.json",
     "tools/error_log_summary.json",
-    "tools/audit_security_events.json"
+    "tools/audit_security_events.json",
+    "tools/cluster_log_events.json"
   ]
 }

@@ -1,0 +1,27 @@
+{
+  "configuration": {
+    "params": {
+      "cluster_name": {
+        "description": "Cluster host-name prefix filter (e.g. 'es-prod' to match es-prod-es-default-0/1). Use an empty string to query all clusters.",
+        "type": "string"
+      },
+      "lookback": {
+        "description": "Lookback window as ES|QL time span text (e.g. '1 hour', '3 hours', '24 hours').",
+        "type": "string"
+      },
+      "node_name": {
+        "description": "Optional exact host.name filter to scope to a single node. Use an empty string to query all nodes.",
+        "type": "string"
+      }
+    },
+    "query": "FROM elastic-cloud-logs-8\n| WHERE @timestamp >= NOW() - TO_TIMEDURATION(?lookback)\n| WHERE event.dataset == \"elasticsearch.server\"\n| WHERE (?cluster_name == \"\" OR STARTS_WITH(host.name, ?cluster_name))\n| WHERE (?node_name == \"\" OR host.name == ?node_name)\n| WHERE log.level IN (\"ERROR\", \"WARN\")\n    OR message LIKE \"*health status changed*\"\n    OR message LIKE \"*node-left*\"\n    OR message LIKE \"*node-join*\"\n    OR message LIKE \"*allocation*\"\n    OR message LIKE \"*OutOfMemory*\"\n    OR message LIKE \"*circuit_break*\"\n    OR message LIKE \"*recovered*\"\n| KEEP @timestamp, log.level, host.name, message\n| SORT @timestamp DESC\n| LIMIT 50"
+  },
+  "description": "Query Elasticsearch server logs for cluster state transitions, node join/leave events, allocation failures, OOM errors, and circuit-breaker events. Use after detecting a yellow/red period to identify the root cause.",
+  "id": "es-cluster-triage-cluster_log_events",
+  "tags": [
+    "es-cluster-triage",
+    "observability",
+    "stack-monitoring"
+  ],
+  "type": "esql"
+}

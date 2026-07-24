@@ -2,7 +2,7 @@
   "configuration": {
     "params": {
       "cluster_name": {
-        "description": "Optional cluster name filter; use an empty string to query all clusters.",
+        "description": "Cluster host-name prefix filter (e.g. 'es-prod'). Use an empty string to query all clusters.",
         "type": "string"
       },
       "lookback": {
@@ -14,7 +14,7 @@
         "type": "string"
       }
     },
-    "query": "FROM elastic-cloud-logs-8\n| WHERE @timestamp >= NOW() - TO_TIMEDURATION(?lookback)\n| WHERE log.level IN (\"ERROR\", \"WARN\")\n| WHERE (?cluster_name == \"\" OR elasticsearch.cluster.name == ?cluster_name)\n| WHERE (?node_name == \"\" OR host.name == ?node_name)\n| STATS events = COUNT() BY bucket = DATE_TRUNC(15 minutes, @timestamp), log.level, host.name, error.message\n| SORT bucket DESC, events DESC\n| LIMIT 50"
+    "query": "FROM elastic-cloud-logs-8\n| WHERE @timestamp >= NOW() - TO_TIMEDURATION(?lookback)\n| WHERE log.level IN (\"ERROR\", \"WARN\")\n| WHERE event.dataset == \"elasticsearch.server\"\n| WHERE (?cluster_name == \"\" OR STARTS_WITH(host.name, ?cluster_name))\n| WHERE (?node_name == \"\" OR host.name == ?node_name)\n| KEEP @timestamp, log.level, host.name, message\n| SORT @timestamp DESC\n| LIMIT 50"
   },
   "description": "Summarize WARN and ERROR logs by node and message.",
   "id": "es-cluster-triage-error_log_summary",
