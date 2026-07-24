@@ -7,9 +7,7 @@
     "es-cluster-triage-cluster_health_summary",
     "es-cluster-triage-red_yellow_periods",
     "es-cluster-triage-node_last_seen",
-    "es-cluster-triage-node_pressure_summary",
     "es-cluster-triage-jvm_gc_pressure",
-    "es-cluster-triage-cluster_log_events",
-    "es-cluster-triage-error_log_summary"
+    "es-cluster-triage-cluster_log_events"
   ]
 }

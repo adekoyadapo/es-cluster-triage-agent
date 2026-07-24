@@ -1,10 +1,11 @@
 {
-  "content": "# ES Logs and Security Triage\n\nUse this skill when logs or audit data are the clearest signal:\n\n- server errors or warnings\n- authentication or authorization failures\n- denied access spikes\n- suspicious audit activity\n\n## Workflow\n\n1. Use `es-cluster-triage-error_log_summary` for generic operational errors and warnings.\n2. Use `es-cluster-triage-audit_security_events` for authentication, authorization, or access-denied issues.\n3. If the logs point to a specific node or index, hand the investigation back to the cluster or index skills.\n\n## Output guidance\n\n- Summarize the dominant log pattern or audit pattern.\n- Identify the affected node, user, or source IP when available.\n- Keep the response concise and avoid raw query text.\n",
+  "content": "# ES Logs and Security Triage\n\nUse this skill when logs or audit data are the clearest signal:\n\n- server errors or warnings\n- authentication or authorization failures\n- denied access spikes\n- suspicious audit activity\n\n## Workflow\n\n1. Use `es-cluster-triage-cluster_log_events` when the question is about cluster state transitions,\n   node join/leave events, shard allocation, OOM errors, or circuit-breaker trips. This tool captures\n   both WARN/ERROR entries and INFO-level `health status changed` messages with verbatim root-cause reasons.\n2. Use `es-cluster-triage-error_log_summary` for a broader ERROR/WARN sweep across the lookback window.\n3. Use `es-cluster-triage-audit_security_events` for authentication, authorization, or access-denied issues.\n4. If the logs point to a specific node or index, hand the investigation back to the cluster or index skills.\n\n## Output guidance\n\n- Summarize the dominant log pattern or audit pattern.\n- Identify the affected node, user, or source IP when available.\n- Keep the response concise and avoid raw query text.\n",
   "description": "Summarize server logs and audit logs for errors, warnings, authentication failures, authorization failures, and access-denied events.",
   "id": "es-cluster-triage-logs-security-triage",
   "name": "ES Logs and Security Triage",
   "tool_ids": [
     "es-cluster-triage-error_log_summary",
-    "es-cluster-triage-audit_security_events"
+    "es-cluster-triage-audit_security_events",
+    "es-cluster-triage-cluster_log_events"
   ]
 }
