@@ -86,9 +86,14 @@ steps:
         - Provide short actionable investigation steps
         - Prefer operational diagnostics over generic advice
 
+        *Recommended remediation*
+        - If confidence is High: provide concrete, severity-appropriate fix steps grounded in Elastic guidance (e.g. for unassigned shards: run GET _cluster/allocation/explain; for ILM stalls: POST <index>/_ilm/retry; for mapping explosion: set dynamic: strict on the index template)
+        - If confidence is Medium or Low: list the specific diagnostic query or Kibana check needed before acting
+        - Keep remediation conditional on the measured severity
+
         *Confidence level*
         - Low / Medium / High
-        - Brief explanation why
+        - High only when metric values, raw data, and the alert signal all agree; cap at Medium when they disagree and explain the discrepancy
 
         Alert metadata:
         - alert_name: {{ event.name }}

@@ -79,9 +79,14 @@ steps:
         - Provide short actionable steps if concerns exist
         - If healthy, suggest monitoring cadence
 
+        *Recommended remediation*
+        - If concerns exist and confidence is High: provide concrete fix steps (e.g. for disk at flood-stage: remove read-only block then scale or delete indices; for heap: scale node memory; for rejections: reduce bulk batch sizes)
+        - If confidence is Medium or Low: list the specific diagnostic check needed first (e.g. GET _cat/allocation?v, GET _cluster/allocation/explain)
+        - If healthy: omit this section or confirm no action needed
+
         *Confidence level*
         - Low / Medium / High
-        - Brief explanation why
+        - High only when the measured metric value, the raw byte/counter figures, and the monitoring data all agree; cap at Medium when they disagree and explain the discrepancy
 
         Metrics source: {{ consts.default_metrics_pattern }}
 

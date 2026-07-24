@@ -76,9 +76,14 @@ steps:
         - Provide short actionable investigation steps
         - Prefer operational diagnostics over generic advice
 
+        *Recommended remediation*
+        - If confidence is High: provide concrete, severity-appropriate fix steps grounded in Elastic guidance (e.g. for disk at flood-stage: PUT _all/_settings {"index.blocks.read_only_allow_delete": null}, then raise watermarks temporarily, then scale nodes or delete/snapshot old indices; for heap: scale node memory or tune GC; for rejections: reduce bulk batch sizes or adjust thread-pool settings)
+        - If confidence is Medium or Low: list the specific diagnostic API or Kibana check needed before acting (e.g. GET _cat/allocation?v, GET _cluster/allocation/explain)
+        - Keep remediation conditional on the measured severity and watermark tier
+
         *Confidence level*
         - Low / Medium / High
-        - Brief explanation why
+        - High only when the measured metric value, the raw byte/counter figures, and the alert signal all agree; cap at Medium when they disagree and explain the discrepancy
 
         Alert metadata:
         - alert_name: {{ event.name }}

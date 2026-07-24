@@ -85,7 +85,7 @@ export function registerIndexPressureTools(server: McpServer): void {
 | WHERE (?cluster_name == "" OR elasticsearch.cluster.name == ?cluster_name)
 | WHERE (?index_name == "" OR elasticsearch.index.name == ?index_name)
 | STATS indexing_total = MAX(elasticsearch.index.total.indexing.index_total), indexing_time_ms = MAX(elasticsearch.index.total.indexing.index_time_in_millis), search_total = MAX(elasticsearch.index.total.search.query_total), search_time_ms = MAX(elasticsearch.index.total.search.query_time_in_millis), docs_total = MAX(elasticsearch.index.total.docs.count), segments_count = MAX(elasticsearch.index.total.segments.count), store_size_bytes = MAX(elasticsearch.index.total.store.size_in_bytes), shards_total = MAX(elasticsearch.index.shards.total), fielddata_memory_bytes = MAX(elasticsearch.index.total.fielddata.memory_size_in_bytes), query_cache_evictions = MAX(elasticsearch.index.total.query_cache.evictions) BY elasticsearch.cluster.name, elasticsearch.index.name
-| EVAL avg_index_latency_ms = CASE(indexing_total > 0, indexing_time_ms / indexing_total, 0), avg_search_latency_ms = CASE(search_total > 0, search_time_ms / search_total, 0), pressure_score = indexing_total + search_total + COALESCE(segments_count, 0) * 100 + COALESCE(shards_total, 0) * 100 + COALESCE(fielddata_memory_bytes, 0) / 1048576 + COALESCE(query_cache_evictions, 0) * 1000000
+| EVAL avg_index_latency_ms = CASE(indexing_total > 0, ROUND(TO_DOUBLE(indexing_time_ms) / indexing_total, 2), 0), avg_search_latency_ms = CASE(search_total > 0, ROUND(TO_DOUBLE(search_time_ms) / search_total, 2), 0), pressure_score = indexing_total + search_total + COALESCE(segments_count, 0) * 100 + COALESCE(shards_total, 0) * 100 + COALESCE(fielddata_memory_bytes, 0) / 1048576 + COALESCE(query_cache_evictions, 0) * 1000000
 | SORT pressure_score DESC
 | LIMIT 50`,
           { lookback, cluster_name: cluster_name ?? "", index_name: index_name ?? "" }
@@ -226,7 +226,7 @@ export function registerIndexPressureTools(server: McpServer): void {
 | WHERE (?cluster_name == "" OR elasticsearch.cluster.name == ?cluster_name)
 | WHERE (?index_name == "" OR elasticsearch.index.name == ?index_name)
 | STATS search_total = MAX(elasticsearch.index.total.search.query_total), search_time_ms = MAX(elasticsearch.index.total.search.query_time_in_millis), docs_total = MAX(elasticsearch.index.total.docs.count), segments_count = MAX(elasticsearch.index.total.segments.count) BY elasticsearch.cluster.name, elasticsearch.index.name
-| EVAL avg_query_latency_ms = CASE(search_total > 0, search_time_ms / search_total, 0)
+| EVAL avg_query_latency_ms = CASE(search_total > 0, ROUND(TO_DOUBLE(search_time_ms) / search_total, 2), 0)
 | SORT avg_query_latency_ms DESC, search_total DESC
 | LIMIT 25`,
           { lookback, cluster_name: cluster_name ?? "", index_name: index_name ?? "" }

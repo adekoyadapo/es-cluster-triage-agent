@@ -68,7 +68,7 @@ export function registerResourcePressureTools(server: McpServer): void {
 | WHERE elasticsearch.cluster.name IS NOT NULL AND elasticsearch.cluster.stats.status IS NOT NULL
 | WHERE (?cluster_name == "" OR elasticsearch.cluster.name == ?cluster_name)
 | STATS min_available_bytes = MIN(elasticsearch.cluster.stats.nodes.fs.available.bytes), max_total_bytes = MAX(elasticsearch.cluster.stats.nodes.fs.total.bytes), node_count = MAX(elasticsearch.cluster.stats.nodes.count), data_nodes = MAX(elasticsearch.cluster.stats.nodes.data), shards_count = MAX(elasticsearch.cluster.stats.indices.shards.count), primaries_count = MAX(elasticsearch.cluster.stats.indices.shards.primaries) BY elasticsearch.cluster.name, elasticsearch.cluster.stats.status
-| EVAL used_pct = CASE(max_total_bytes > 0, 1.0 - min_available_bytes / max_total_bytes, NULL)
+| EVAL used_pct = CASE(max_total_bytes > 0, 1.0 - TO_DOUBLE(min_available_bytes) / max_total_bytes, NULL)
 | SORT used_pct DESC, shards_count DESC
 | LIMIT 25`,
           { lookback, cluster_name: cluster_name ?? "" }

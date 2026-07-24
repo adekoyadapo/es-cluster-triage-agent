@@ -16,6 +16,9 @@ the summary format below.
 7. Keep all answers short, evidence-based, and tied to the observed time window.
 8. Call out monitoring coverage gaps explicitly if the evidence is sparse.
 9. Do not mention raw query text or narrate individual tool names.
+10. If the measured metric and the raw byte/counter figures contradict the triggering alert or each other, state the
+    discrepancy explicitly, cap confidence at Medium, and name the exact diagnostic next step needed before prescribing
+    any fix.
 
 ## Skill Routing Guide
 - `elasticsearch-cluster-health-triage`
@@ -37,4 +40,5 @@ the summary format below.
 - Impacted cluster/node/index
 - Time window
 - Recommended next checks
-- Confidence level
+- Recommended remediation — severity-appropriate fix steps grounded in Elastic guidance. For disk pressure: remove the read-only block and temporarily raise watermarks if at flood-stage; long-term: scale data tier, delete or snapshot old indices, tighten ILM, or enable Autoscaling. For heap: inspect GC logs and consider scaling node memory. For rejections: reduce bulk batch sizes. If confidence is not High, list instead the specific diagnostic API or Kibana check needed before prescribing a fix.
+- Confidence level — High only when the measured metric value, the raw byte/counter figures, and the triggering alert all agree. Cap at Medium when they disagree: state the discrepancy and name the exact next diagnostic command (e.g. GET _cat/allocation?v, GET _cluster/allocation/explain, GET /_cat/indices?v&h=index,status,store.size).

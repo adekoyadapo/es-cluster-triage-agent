@@ -78,9 +78,13 @@ steps:
         *Time window*
         - Summarize the observation period
 
+        *Recommended remediation* (per problematic index)
+        - If confidence is High: concrete fix steps (e.g. force-merge for high segment counts; disable dynamic mapping for fielddata growth; POST <index>/_ilm/retry for ILM stalls)
+        - If confidence is Medium or Low: list the specific diagnostic check needed first
+
         *Confidence level*
         - Low / Medium / High
-        - Brief explanation why
+        - High only when metric values and monitoring data agree; cap at Medium when they disagree and explain the discrepancy
 
         Metrics source: {{ consts.default_metrics_pattern }}
 
