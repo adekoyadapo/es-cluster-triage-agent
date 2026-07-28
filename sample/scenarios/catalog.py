@@ -10,6 +10,8 @@ Each scenario entry:
 """
 from __future__ import annotations
 
+import shutil
+
 CATALOG: list[dict] = [
     {
         "id":    "mapping_explosion",
@@ -86,6 +88,9 @@ def get(sid: str) -> dict:
     return _ID_TO_ENTRY[sid]
 
 
+_RISK_BADGE = {"low": "low ", "medium": "med ", "high": "HIGH"}
+
+
 def interactive_picker(initial: set[str] | None = None) -> set[str]:
     """
     Interactive multi-select menu. Returns the set of selected scenario ids.
@@ -93,20 +98,29 @@ def interactive_picker(initial: set[str] | None = None) -> set[str]:
     """
     selected: set[str] = set(initial) if initial is not None else set(DEFAULT_SAFE)
 
-    _RISK_COLOR = {"low": "🟢", "medium": "🟡", "high": "🔴"}
-
     while True:
-        print("\n" + "─" * 62)
-        print("  Scenario Selection  (space/comma-separated numbers to toggle)")
-        print("─" * 62)
+        tw = shutil.get_terminal_size(fallback=(100, 24)).columns
+        # Row layout: "  [✓] XX. {label:<24}  [rrr]  {desc}{gate}"
+        # prefix = 2+1+1+1+1 + 4 + 1 + 24 + 2 + 6 + 2 = ~44 fixed chars before desc
+        fixed = 44
+        gate_len = 14   # "  ⚠ required"
+        max_desc = max(tw - fixed - gate_len - 2, 24)
+        sep = "─" * min(tw, 72)
+
+        print("\n" + sep)
+        print("  Scenario Selection  (numbers to toggle, Enter to confirm)")
+        print(sep)
         for i, s in enumerate(CATALOG, 1):
             mark = "✓" if s["id"] in selected else " "
-            icon = _RISK_COLOR.get(s["risk"], "")
-            gate = "  ⚠ confirmation required" if s["gated"] else ""
-            print(f"  [{mark}] {i:2d}. {s['label']:<26}  {icon} {s['desc']}{gate}")
-        print("─" * 62)
-        count = len(selected)
-        print(f"  Selected: {count}  |  all=all-safe  safe=all-safe  none=clear  Enter=confirm")
+            badge = _RISK_BADGE.get(s["risk"], "    ")
+            gate  = "  ⚠ required" if s["gated"] else ""
+            desc  = s["desc"]
+            avail = max_desc - len(gate)
+            if len(desc) > avail:
+                desc = desc[:avail - 1] + "…"
+            print(f"  [{mark}] {i:2d}. {s['label']:<24}  [{badge}]  {desc}{gate}")
+        print(sep)
+        print(f"  Selected: {len(selected)}  |  all / safe / none / Enter=confirm")
 
         try:
             inp = input("  > ").strip().lower()

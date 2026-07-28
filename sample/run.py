@@ -133,21 +133,22 @@ def _render_dashboard(stats: dict, scenarios: set, cluster_names: list,
     lines.append(_row(f"   {'Total':<20}  {total:>9,} docs{rej_str}"))
     lines.append(_div())
 
-    # Cluster health
+    # Cluster health  (use narrow ASCII markers — emoji are 2 display cols but
+    # Python counts them as 1, which throws off the ANSI cursor-up line math)
     lines.append(_row(" CLUSTER HEALTH"))
     health = stats.get("cluster_health", {})
     if health:
         for cname, h in health.items():
             status = str(h.get("status", "?")).upper()
-            icon = {"GREEN": "🟢", "YELLOW": "🟡", "RED": "🔴"}.get(status, "⚪")
+            mark   = {"GREEN": "+", "YELLOW": "!", "RED": "X"}.get(status, "?")
             active   = h.get("active_shards", "?")
             unassign = h.get("unassigned_shards", 0)
             search_r = h.get("search_rejections", 0)
             write_r  = h.get("write_rejections", 0)
-            lines.append(_row(f"   {icon} {cname:<16} {status}"))
-            lines.append(_row(f"      shards: {active} active  /  {unassign} unassigned"))
+            lines.append(_row(f"   [{mark}] {cname:<16} {status}"))
+            lines.append(_row(f"       shards: {active} active  /  {unassign} unassigned"))
             if search_r or write_r:
-                lines.append(_row(f"      rejections: search={search_r}  write={write_r}"))
+                lines.append(_row(f"       rejections: search={search_r}  write={write_r}"))
     else:
         lines.append(_row("   (checking…)"))
     lines.append(_div())
@@ -410,13 +411,14 @@ def main() -> None:
         format="%(asctime)s  %(levelname)-7s  %(name)s  %(message)s",
         datefmt="%H:%M:%S",
     )
-    # Suppress HTTP-level noise from elastic_transport and urllib3
+    # Suppress HTTP-level noise from elastic_transport, urllib3, and espipe bootstrap
     _noisy = [
         "elastic_transport",
         "elastic_transport.transport",
         "elastic_transport.node_pool",
         "urllib3",
         "urllib3.connectionpool",
+        "sample.espipe_runner",   # logs INFO during bootstrap; hidden in banner
     ]
     for _name in _noisy:
         logging.getLogger(_name).setLevel(logging.ERROR)
@@ -492,6 +494,21 @@ def main() -> None:
         if not confirm_red():
             selected.discard("red")
             print("  RED scenario skipped.\n")
+
+    # ── Interactive duration prompt (if not already set via CLI or .env) ───────
+    _interactive_mode = args.interactive or not args.problems
+    if _interactive_mode and not args.duration:
+        dur_default = "10m"
+        print()
+        try:
+            dur_inp = input(f"  Duration [{dur_default}]: ").strip()
+            if dur_inp:
+                try:
+                    duration = parse_duration(dur_inp)
+                except (ValueError, TypeError):
+                    print(f"  (invalid format — using {dur_default})")
+        except (EOFError, KeyboardInterrupt):
+            print()
 
     # ── Print banner ──────────────────────────────────────────────────────────
     cluster_names = [c.name for c in confs]
