@@ -6,25 +6,51 @@ notable anti-patterns that the **es-cluster-triage** agent should surface.
 ## Quick start
 
 ```bash
-# 1. Install Python deps (elasticsearch-py is the only real dep; already installed)
-pip install -r sample/requirements.txt
+# 1. Install Python deps + espipe
+make install
 
 # 2. Copy and fill credentials
 cp sample/.env.example sample/.env
 # Edit sample/.env with your cluster URL + credentials
 
-# 3. Run (interactive scenario picker, 10m default)
-python3 sample/run.py
+# 3. Run (interactive scenario + duration picker)
+make run
 
-# 4. Targeted 2m validation with specific scenarios
-python3 sample/run.py --duration 2m --problems mapping_explosion,hotspot,unassigned
+# 4. Run with flags
+make run DURATION=5m PROBLEMS=safe
+make run DURATION=2m PROBLEMS=mapping_explosion,hotspot,unassigned
+make run DURATION=10m PROBLEMS=all SEED=99
 
-# 5. All safe scenarios, 10m run
-python3 sample/run.py --duration 10m --problems safe
+# 5. Teardown (removes all sample-* indices, templates, ILM policies)
+make teardown
 
-# 6. Teardown (removes all sample-* indices, templates, ILM policies)
-python3 sample/run.py --teardown
+# 6. Clean up Python venv + espipe installation
+make distclean
 ```
+
+### Make targets
+
+| Target | Description |
+|--------|-------------|
+| `make install` | Create Python venv, install deps, install espipe via cargo |
+| `make run` | Run the simulator (interactive prompts if no flags set) |
+| `make teardown` | Delete all `sample-*` resources from the cluster |
+| `make clean` | Remove the Python virtual environment (`sample/.venv`) |
+| `make clean-espipe` | Uninstall espipe via `cargo uninstall` |
+| `make distclean` | `clean` + `clean-espipe` |
+
+### Run variables
+
+Pass any combination alongside `make run`:
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `DURATION` | interactive prompt | Run duration: `30s` / `5m` / `2h` |
+| `PROBLEMS` | interactive picker | Scenario ids, or `all` / `safe` / `none` |
+| `SEED` | `42` | Random seed for reproducible data |
+| `ENV_FILE` | `sample/.env` | Path to credentials file |
+| `INTERACTIVE` | — | Set to `1` to force the scenario picker |
+| `VERBOSE` | — | Set to `1` for debug logging |
 
 ## Scenario catalog
 
@@ -45,11 +71,13 @@ python3 sample/run.py --teardown
 
 ## CLI reference
 
+The `make run` targets wrap these flags. You can also invoke the script directly:
+
 ```
 python3 sample/run.py [options]
 
   --env FILE          .env file path (default: sample/.env)
-  --duration DUR      30s / 5m / 2h  (default: 10m)
+  --duration DUR      30s / 5m / 2h  (default: interactive prompt)
   --problems IDS      comma-separated ids, or 'all' / 'safe' / 'none'
   --interactive       Always show interactive picker
   --teardown          Delete all sample-* resources and exit
