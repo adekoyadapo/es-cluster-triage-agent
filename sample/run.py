@@ -24,12 +24,18 @@ from __future__ import annotations
 import argparse
 import json
 import logging
-import os
 import sys
 import time
 import threading
+import warnings
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+
+# ── Silence noisy libraries before anything else imports them ──────────────────
+import urllib3
+warnings.filterwarnings("ignore", category=urllib3.exceptions.InsecureRequestWarning)
+warnings.filterwarnings("ignore", category=DeprecationWarning)
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent
 if str(_REPO_ROOT) not in sys.path:
@@ -45,20 +51,138 @@ from sample.scenarios.problems import apply_problems
 
 log = logging.getLogger("sample")
 
-_TICK_INTERVAL = 10  # seconds between ingest ticks
+_TICK_INTERVAL = 10      # seconds between ingest ticks
+_HEALTH_EVERY  = 3       # check cluster health every N ticks
 
 # Docs generated per tick per dataset
 _BATCH_SIZES = {
     "transactions": 150,
     "javalogs":     400,
-    "metrics":      800,  # high write rate — small docs
+    "metrics":      800,
 }
+
+# Maps scenario id → display label for dashboard
+_SCENARIO_TARGETS = {
+    "mapping_explosion": "sample-field-explosion      [dynamic:true, 100K fields]",
+    "oversharding":      "sample-oversharded          [12 primaries, no rollover]",
+    "unassigned":        "sample-unassigned           [replicas:3 → YELLOW]",
+    "hotspot":           "sample-hotspot              [all writes → shard 0]",
+    "slow_cpu":          "sample-search-stress        [0ms slowlog, expensive qs]",
+    "heap":              "sample-search-stress        [fielddata:true on text]",
+    "scroll":            "sample-search-stress        [from:10k+ / scroll leak]",
+    "threadpool":        "64 concurrent query workers [→ 429 rejections]",
+    "red":               "sample-red                  [impossible alloc → RED]",
+}
+
+
+# ── Dashboard ──────────────────────────────────────────────────────────────────
+
+_BW = 60          # box inner width (between ║ characters)
+_PFX = "  "       # left indent
+
+def _top():    return f"{_PFX}╔{'═' * _BW}╗"
+def _bot():    return f"{_PFX}╚{'═' * _BW}╝"
+def _div():    return f"{_PFX}╠{'═' * _BW}╣"
+def _row(s=""):
+    content_w = _BW - 2
+    if len(s) > content_w:
+        s = s[:content_w - 1] + "…"
+    return f"{_PFX}║ {s:<{content_w}} ║"
+
+
+def _progress_bar(pct: float, width: int = 28) -> str:
+    filled = int(pct * width)
+    return "█" * filled + "░" * (width - filled)
+
+
+def _render_dashboard(stats: dict, scenarios: set, cluster_names: list,
+                      duration: int, start_time: float) -> list[str]:
+    elapsed   = time.time() - start_time
+    remaining = max(0, duration - elapsed)
+    pct       = min(1.0, elapsed / max(1, duration))
+
+    def fmt_t(s): return f"{int(s // 60)}m {int(s % 60):02d}s"
+
+    lines = [_top()]
+    lines.append(_row(f" ES Activity Simulator            {fmt_t(elapsed)} / {fmt_t(duration)}"))
+    lines.append(_row(f" Clusters: {', '.join(cluster_names)}"))
+    lines.append(_div())
+
+    # Progress bar
+    bar = _progress_bar(pct)
+    lines.append(_row(f" [{bar}]  {int(pct * 100):3d}%  —  {fmt_t(remaining)} left"))
+    lines.append(_div())
+
+    # Ingest stats
+    lines.append(_row(" INGEST"))
+    by_ds = stats.get("by_dataset", {})
+    labels = [
+        ("transactions", "transactions"),
+        ("javalogs",     "logs (Java)"),
+        ("metrics",      "metrics"),
+        ("problems",     "problem indices"),
+    ]
+    for key, label in labels:
+        n = by_ds.get(key, 0)
+        if n > 0 or key != "problems":
+            lines.append(_row(f"   {label:<20}  {n:>9,} docs"))
+    total = stats.get("docs_ingested", 0)
+    rejs  = stats.get("rejections", 0)
+    lines.append(_row(f"   {'─' * 38}"))
+    rej_str = f"  429s: {rejs:,}" if rejs > 0 else ""
+    lines.append(_row(f"   {'Total':<20}  {total:>9,} docs{rej_str}"))
+    lines.append(_div())
+
+    # Cluster health
+    lines.append(_row(" CLUSTER HEALTH"))
+    health = stats.get("cluster_health", {})
+    if health:
+        for cname, h in health.items():
+            status = str(h.get("status", "?")).upper()
+            icon = {"GREEN": "🟢", "YELLOW": "🟡", "RED": "🔴"}.get(status, "⚪")
+            active   = h.get("active_shards", "?")
+            unassign = h.get("unassigned_shards", 0)
+            search_r = h.get("search_rejections", 0)
+            write_r  = h.get("write_rejections", 0)
+            lines.append(_row(f"   {icon} {cname:<16} {status}"))
+            lines.append(_row(f"      shards: {active} active  /  {unassign} unassigned"))
+            if search_r or write_r:
+                lines.append(_row(f"      rejections: search={search_r}  write={write_r}"))
+    else:
+        lines.append(_row("   (checking…)"))
+    lines.append(_div())
+
+    # Scenarios
+    lines.append(_row(f" SCENARIOS  ({len(scenarios)} active)"))
+    for sid in sorted(scenarios):
+        target = _SCENARIO_TARGETS.get(sid, sid)
+        lines.append(_row(f"   ✓ {sid:<20}  {target}"))
+    if not scenarios:
+        lines.append(_row("   (healthy baseline — no problem scenarios)"))
+
+    lines.append(_bot())
+    lines.append(f"{_PFX}  Press Ctrl+C to stop early")
+    return lines
+
+
+_dashboard_height = 0
+
+
+def _draw_dashboard(lines: list[str]) -> None:
+    global _dashboard_height
+    if _dashboard_height:
+        # Move cursor up to start of previous draw, clear each line as we go
+        sys.stdout.write(f"\033[{_dashboard_height}A")
+    for line in lines:
+        sys.stdout.write(f"\033[2K{line}\n")
+    sys.stdout.flush()
+    _dashboard_height = len(lines)
 
 
 # ── Ingest helpers ─────────────────────────────────────────────────────────────
 
 def _ingest_with_routing(client, docs: list[dict], index_name: str, routing_key: str) -> int:
-    """Bulk-index docs into a plain index with a fixed routing key."""
+    """Bulk-index docs with a fixed routing key (forces all to one shard)."""
     from elasticsearch.helpers import bulk as es_bulk
     def _gen():
         for d in docs:
@@ -72,7 +196,6 @@ def _ingest_with_routing(client, docs: list[dict], index_name: str, routing_key:
 
 
 def _generate_field_explosion_lines(synth: SynthGen, n: int):
-    """Each doc includes 5-10 random dyn_* fields to grow the mapping."""
     for _ in range(n):
         doc = {
             "@timestamp": synth.ts_now_iso(),
@@ -85,7 +208,6 @@ def _generate_field_explosion_lines(synth: SynthGen, n: int):
 
 
 def _generate_search_stress_lines(synth: SynthGen, n: int):
-    """Transaction-like docs with longer text fields for search stress index."""
     for _ in range(n):
         doc = {
             "@timestamp": synth.ts_now_iso(),
@@ -100,13 +222,12 @@ def _generate_search_stress_lines(synth: SynthGen, n: int):
 
 def _generate_oversharded_lines(synth: SynthGen, n: int):
     for _ in range(n):
-        doc = {
+        yield json.dumps({
             "@timestamp": synth.ts_now_iso(),
             "message": synth.lorem_words(5),
             "value":   synth._float(0, 100),
             "tag":     "overshard",
-        }
-        yield json.dumps(doc)
+        })
 
 
 def _do_ingest_tick(confs: list[ClusterConf], clients: dict, synth: SynthGen,
@@ -117,30 +238,35 @@ def _do_ingest_tick(confs: list[ClusterConf], clients: dict, synth: SynthGen,
 
         if ds_cls.name == "transactions":
             lines = list(TransactionsDataset.generate_ndjson_lines(synth, n, False))
+            ds_key = "transactions"
         elif ds_cls.name == "javalogs":
             lines = list(JavaLogsDataset.generate_ndjson_lines(synth, n, False))
+            ds_key = "javalogs"
         else:
             lines = list(MetricsDataset.generate_ndjson_lines(synth, n))
+            ds_key = "metrics"
 
         for conf in confs:
             result = ingest_lines(iter(lines), conf, ds_cls.datastream)
+            sent = result.get("docs_sent", 0)
             with lock:
-                stats["docs_ingested"] += result.get("docs_sent", 0)
+                stats["docs_ingested"] += sent
+                stats["by_dataset"][ds_key] += sent
 
-    # ── Problem-specific ingest ────────────────────────────────────────────────
+    # Problem-index ingest
+    problem_docs = 0
+
     if "oversharding" in problems:
         ov_lines = list(_generate_oversharded_lines(synth, 200))
         for conf in confs:
             r = ingest_lines(iter(ov_lines), conf, "sample-oversharded", action="index")
-            with lock:
-                stats["docs_ingested"] += r.get("docs_sent", 0)
+            problem_docs += r.get("docs_sent", 0)
 
     if "mapping_explosion" in problems:
         ex_lines = list(_generate_field_explosion_lines(synth, 100))
         for conf in confs:
             r = ingest_lines(iter(ex_lines), conf, "sample-field-explosion", action="index")
-            with lock:
-                stats["docs_ingested"] += r.get("docs_sent", 0)
+            problem_docs += r.get("docs_sent", 0)
 
     if "hotspot" in problems:
         hotspot_docs = [
@@ -154,74 +280,73 @@ def _do_ingest_tick(confs: list[ClusterConf], clients: dict, synth: SynthGen,
             for _ in range(300)
         ]
         for conf in confs:
-            client = clients[conf.name]
-            ok = _ingest_with_routing(client, hotspot_docs, "sample-hotspot", "hot_partition")
-            with lock:
-                stats["docs_ingested"] += ok
+            ok = _ingest_with_routing(clients[conf.name], hotspot_docs, "sample-hotspot", "hot_partition")
+            problem_docs += ok
 
-    # Always feed search-stress if it may be targeted by queries
     if problems & {"slow_cpu", "heap", "scroll", "threadpool"}:
         ss_lines = list(_generate_search_stress_lines(synth, 50))
         for conf in confs:
             r = ingest_lines(iter(ss_lines), conf, "sample-search-stress", action="index")
-            with lock:
-                stats["docs_ingested"] += r.get("docs_sent", 0)
+            problem_docs += r.get("docs_sent", 0)
+
+    if problem_docs:
+        with lock:
+            stats["docs_ingested"] += problem_docs
+            stats["by_dataset"]["problems"] += problem_docs
 
 
 # ── Query workers ──────────────────────────────────────────────────────────────
 
 def _query_worker(client, problems: set[str], stop_event: threading.Event,
-                  counter: dict, lock: threading.Lock) -> None:
+                  stats: dict, lock: threading.Lock) -> None:
     import random
     rng = random.Random()
-    rejections = 0
+    local_rej = 0
 
     def _search(body: dict, index: str = "sample-transactions*") -> None:
-        nonlocal rejections
+        nonlocal local_rej
         try:
             client.search(index=index, body=body, request_timeout=30)
         except Exception as e:
             msg = str(e)
             if "429" in msg or "rejected" in msg.lower():
-                rejections += 1
+                local_rej += 1
 
     while not stop_event.is_set():
         try:
-            # Healthy baseline — run against all 3 data streams
+            # Healthy baseline — mixed queries across all streams + reference lookup
             _search({"query": {"match_all": {}}, "size": 10})
             _search({"query": {"match_all": {}}, "size": 5}, index="sample-logs*")
             _search({"query": {"match_all": {}}, "size": 5}, index="sample-metrics*")
-
-            # Reference index lookups (simulates app reading lookup data)
             _search({"query": {"term": {"active": True}}, "size": 20}, index="sample-reference")
 
             if "slow_cpu" in problems:
-                # Expensive queries against search-stress
+                word = rng.choice(["lorem", "ipsum", "dolor", "amet"])
                 _search({"query": {"query_string": {
-                    "query": f"*{rng.choice(['lorem', 'ipsum', 'dolor', 'amet'])}*"
+                    "default_field": "message",
+                    "query": f"message:*{word}*",
                 }}, "size": 5}, index="sample-search-stress")
                 _search({
                     "size": 0,
                     "aggs": {
                         "by_tag": {
                             "terms": {"field": "tag", "size": 10000},
-                            "aggs": {"unique_users": {"cardinality": {"field": "user_ref"}}}
+                            "aggs": {"unique_users": {"cardinality": {"field": "user_ref"}}},
                         }
-                    }
+                    },
                 }, index="sample-search-stress")
                 _search({"query": {"regexp": {
                     "user_ref": f"PTY-[0-9]{{{rng.randint(4, 6)}}}"
                 }}, "size": 5}, index="sample-search-stress")
 
             if "heap" in problems:
-                # fielddata blowup: agg on text field with fielddata:true
                 _search({
                     "size": 0,
-                    "aggs": {"message_terms": {"terms": {"field": "message", "size": 10000}}}
+                    "aggs": {"message_terms": {"terms": {"field": "message", "size": 10000}}},
                 }, index="sample-search-stress")
 
             if "scroll" in problems:
-                offset = rng.choice([5000, 10000, 20000, 50000])
+                offset = rng.choice([5000, 10000, 20000])
                 try:
                     client.search(
                         index="sample-search-stress",
@@ -230,14 +355,14 @@ def _query_worker(client, problems: set[str], stop_event: threading.Event,
                     )
                 except Exception as e:
                     if "429" in str(e) or "rejected" in str(e).lower():
-                        rejections += 1
+                        local_rej += 1
                 try:
+                    # Intentionally leak scroll context
                     client.search(
-                        index="sample-*", scroll="5m",
-                        body={"size": 100, "query": {"match_all": {}}},
+                        index="sample-search-stress", scroll="5m",
+                        body={"size": 50, "query": {"match_all": {}}},
                         request_timeout=30,
                     )
-                    # Intentionally NOT clearing the scroll — resource leak
                 except Exception:
                     pass
 
@@ -248,9 +373,16 @@ def _query_worker(client, problems: set[str], stop_event: threading.Event,
             pass
 
         with lock:
-            counter["rejections"] += rejections
-        rejections = 0
+            stats["rejections"] += local_rej
+        local_rej = 0
         time.sleep(rng.uniform(0.05, 0.3))
+
+
+# ── Setup helpers ──────────────────────────────────────────────────────────────
+
+def _setup_step(cluster: str, label: str, ok: bool = True) -> None:
+    icon = "✓" if ok else "✗"
+    print(f"  [{cluster}]  {icon}  {label}")
 
 
 # ── Main ───────────────────────────────────────────────────────────────────────
@@ -264,17 +396,28 @@ def main() -> None:
     parser.add_argument("--env",         default=None, help="Path to .env file")
     parser.add_argument("--duration",    default=None, help="Run duration: 30s / 5m / 2h")
     parser.add_argument("--problems",    default=None, help="Scenario ids (csv) or all/safe/none")
-    parser.add_argument("--interactive", action="store_true", help="Force interactive scenario picker")
-    parser.add_argument("--teardown",    action="store_true", help="Delete all sample-* resources and exit")
+    parser.add_argument("--interactive", action="store_true", help="Force interactive picker")
+    parser.add_argument("--teardown",    action="store_true", help="Delete all sample-* and exit")
     parser.add_argument("--seed",        type=int, default=42, help="Random seed")
     parser.add_argument("-v", "--verbose", action="store_true", help="Debug logging")
     args = parser.parse_args()
 
+    # ── Logging ───────────────────────────────────────────────────────────────
     logging.basicConfig(
         level=logging.DEBUG if args.verbose else logging.INFO,
         format="%(asctime)s  %(levelname)-7s  %(name)s  %(message)s",
         datefmt="%H:%M:%S",
     )
+    # Suppress HTTP-level noise from elastic_transport and urllib3
+    _noisy = [
+        "elastic_transport",
+        "elastic_transport.transport",
+        "elastic_transport.node_pool",
+        "urllib3",
+        "urllib3.connectionpool",
+    ]
+    for _name in _noisy:
+        logging.getLogger(_name).setLevel(logging.ERROR)
 
     # ── Locate .env ───────────────────────────────────────────────────────────
     env_path: Path | None = None
@@ -307,21 +450,22 @@ def main() -> None:
         print("\n  No clusters configured via .env — switching to interactive mode.\n")
         confs, duration = collect_interactive()
 
-    print(f"\n  Clusters : {', '.join(c.name for c in confs)}")
-    print(f"  Duration : {duration}s")
+    # ── Suppress es_admin INFO during setup (re-enable after) ─────────────────
+    _admin_log = logging.getLogger("sample.es_admin")
+    _admin_level_saved = _admin_log.level
 
-    # ── Build clients ─────────────────────────────────────────────────────────
     clients = {conf.name: make_client(conf) for conf in confs}
-    synth = SynthGen(seed=args.seed)
+    synth   = SynthGen(seed=args.seed)
 
     # ── Teardown mode ─────────────────────────────────────────────────────────
     if args.teardown:
-        print("\n  Tearing down all sample-* resources...")
+        print("\n  Tearing down all sample-* resources…")
         for conf in confs:
             client = clients[conf.name]
             teardown_all(client)
             h = get_cluster_health(client)
-            print(f"  [{conf.name}] cluster health after teardown: {h.get('status', '?')}")
+            status = h.get("status", "?").upper()
+            print(f"  [{conf.name}]  ✓  Cluster: {status}")
         print("\n  Done.\n")
         return
 
@@ -342,124 +486,179 @@ def main() -> None:
             initial = set()
         selected = interactive_picker(initial)
 
-    # RED gate
     if "red" in selected:
         if not confirm_red():
             selected.discard("red")
             print("  RED scenario skipped.\n")
 
-    if not selected:
-        print("  No scenarios selected — running healthy baseline only.\n")
-
-    print(f"\n  Active scenarios : {', '.join(sorted(selected)) or '(healthy baseline)'}")
-    print(f"  Seed             : {args.seed}\n")
+    # ── Print banner ──────────────────────────────────────────────────────────
+    cluster_names = [c.name for c in confs]
+    dur_str = f"{duration // 60}m" if duration % 60 == 0 else f"{duration}s"
+    print()
+    print(_top())
+    print(_row(f" ES Activity Simulator"))
+    print(_row(f" Clusters : {', '.join(cluster_names)}"))
+    print(_row(f" Duration : {dur_str}   Seed: {args.seed}"))
+    scenario_list = ", ".join(sorted(selected)) or "healthy baseline"
+    # Truncate if too long for box
+    max_len = _BW - 16
+    if len(scenario_list) > max_len:
+        scenario_list = scenario_list[:max_len - 1] + "…"
+    print(_row(f" Scenarios: {len(selected)} active — {scenario_list}"))
+    print(_div())
 
     # ── Bootstrap espipe ──────────────────────────────────────────────────────
-    print("  Checking espipe...")
+    print(_row(" Checking espipe…"))
     try:
         cmd = ensure_espipe()
-        print(f"  espipe ready: {' '.join(cmd[:2])}\n")
+        print(_row(f"  ✓  espipe: {cmd[0]}"))
     except RuntimeError as e:
-        print(f"\n  ERROR: {e}\n")
+        print(_row(f"  ✗  espipe: {e}"))
+        print(_bot())
         sys.exit(1)
+    print(_div())
 
-    # ── Cluster setup ─────────────────────────────────────────────────────────
-    print("  Setting up cluster resources...")
+    # ── Cluster setup (suppress HTTP logs, print step bullets) ────────────────
+    _problems_log = logging.getLogger("sample.scenarios.problems")
+    _healthy_log  = logging.getLogger("sample.scenarios.healthy")
+    _admin_log.setLevel(logging.WARNING)
+    _problems_log.setLevel(logging.WARNING)
+    _healthy_log.setLevel(logging.WARNING)
+
+    print(_row(" Setting up cluster resources…"))
     for conf in confs:
         client = clients[conf.name]
-        print(f"  [{conf.name}] configuring ILM, templates, datastreams, plain indices...")
+        print(_row(f"  [{conf.name}]  ILM policies + component/index templates…"))
+        sys.stdout.flush()
         setup_all(client, synth)
+        print(_row(f"  [{conf.name}]  ✓  ILM, templates, data streams, plain indices"))
 
         if selected:
-            print(f"  [{conf.name}] applying problem scenarios...")
-            ctx = apply_problems(client, selected)
+            print(_row(f"  [{conf.name}]  Applying {len(selected)} problem scenarios…"))
+            sys.stdout.flush()
+            apply_problems(client, selected)
+            print(_row(f"  [{conf.name}]  ✓  Scenarios applied"))
 
         h = get_cluster_health(client)
-        print(f"  [{conf.name}] cluster health: {h.get('status', '?')}  "
-              f"(shards: {h.get('active_shards', 0)} active, "
-              f"{h.get('unassigned_shards', 0)} unassigned)")
+        status = h.get("status", "?").upper()
+        active = h.get("active_shards", "?")
+        unassign = h.get("unassigned_shards", 0)
+        icon = {"GREEN": "🟢", "YELLOW": "🟡", "RED": "🔴"}.get(status, "⚪")
+        print(_row(f"  [{conf.name}]  {icon}  {status}  —  {active} shards active, {unassign} unassigned"))
 
+    _admin_log.setLevel(_admin_level_saved)
+    _problems_log.setLevel(_admin_level_saved)
+    _healthy_log.setLevel(_admin_level_saved)
+    print(_bot())
     print()
 
-    # ── Stats counters ────────────────────────────────────────────────────────
-    stats = {"docs_ingested": 0, "rejections": 0}
+    # ── Stats and shared state ────────────────────────────────────────────────
+    stats: dict = {
+        "docs_ingested": 0,
+        "rejections": 0,
+        "by_dataset": {"transactions": 0, "javalogs": 0, "metrics": 0, "problems": 0},
+        "cluster_health": {},
+    }
     lock = threading.Lock()
 
-    # ── Query worker pool ─────────────────────────────────────────────────────
-    n_query_workers = 64 if "threadpool" in selected else 6
+    # Initial health snapshot
+    for conf in confs:
+        h  = dict(get_cluster_health(clients[conf.name]))
+        rj = get_rejection_counts(clients[conf.name])
+        h["search_rejections"] = rj.get("search", 0)
+        h["write_rejections"]  = rj.get("write", 0)
+        with lock:
+            stats["cluster_health"][conf.name] = h
+
+    # ── Query workers ─────────────────────────────────────────────────────────
+    n_workers = 64 if "threadpool" in selected else 6
     stop_event = threading.Event()
-    executor = ThreadPoolExecutor(max_workers=n_query_workers, thread_name_prefix="qw")
-    query_futures = []
+    executor = ThreadPoolExecutor(max_workers=n_workers, thread_name_prefix="qw")
 
     for conf in confs:
-        client = clients[conf.name]
-        for _ in range(n_query_workers):
-            f = executor.submit(_query_worker, client, selected, stop_event, stats, lock)
-            query_futures.append(f)
+        for _ in range(n_workers):
+            executor.submit(_query_worker, clients[conf.name], selected, stop_event, stats, lock)
 
     # ── Main ingest loop ──────────────────────────────────────────────────────
-    deadline = time.time() + duration
-    tick = 0
-
-    print(f"  Running for {duration}s  (Ctrl+C to stop early)")
-    print(f"  {'─'*60}")
+    start_time = time.time()
+    deadline   = start_time + duration
+    tick       = 0
 
     try:
         while time.time() < deadline:
             tick += 1
-            elapsed   = int(time.time() - (deadline - duration))
-            remaining = max(0, int(deadline - time.time()))
 
+            # Ingest
             _do_ingest_tick(confs, clients, synth, selected, stats, lock)
 
+            # Refresh cluster health every N ticks
+            if tick % _HEALTH_EVERY == 0:
+                for conf in confs:
+                    try:
+                        h  = dict(get_cluster_health(clients[conf.name]))
+                        rj = get_rejection_counts(clients[conf.name])
+                        h["search_rejections"] = rj.get("search", 0)
+                        h["write_rejections"]  = rj.get("write", 0)
+                        with lock:
+                            stats["cluster_health"][conf.name] = h
+                    except Exception:
+                        pass
+
+            # Redraw dashboard
             with lock:
-                docs = stats["docs_ingested"]
-                rejs = stats["rejections"]
-            print(
-                f"\r  [{elapsed:4d}s / {duration}s]  "
-                f"docs: {docs:>9,}  "
-                f"429s: {rejs:>5}  "
-                f"remaining: {remaining}s   ",
-                end="", flush=True,
-            )
+                snap = {
+                    "docs_ingested": stats["docs_ingested"],
+                    "rejections":    stats["rejections"],
+                    "by_dataset":    dict(stats["by_dataset"]),
+                    "cluster_health": dict(stats["cluster_health"]),
+                }
+            dash_lines = _render_dashboard(snap, selected, cluster_names, duration, start_time)
+            _draw_dashboard(dash_lines)
 
             time.sleep(_TICK_INTERVAL)
 
     except KeyboardInterrupt:
-        print("\n\n  Interrupted — stopping...")
-
-    print()
+        pass  # handled below
 
     # ── Shutdown ──────────────────────────────────────────────────────────────
     stop_event.set()
     executor.shutdown(wait=False)
 
-    # ── Final summary ─────────────────────────────────────────────────────────
-    print("\n" + "═" * 62)
-    print("  Run Summary")
-    print("═" * 62)
+    # Final dashboard draw
     with lock:
-        print(f"  Documents ingested : {stats['docs_ingested']:,}")
-        print(f"  429 rejections     : {stats['rejections']:,}")
+        snap = {
+            "docs_ingested": stats["docs_ingested"],
+            "rejections":    stats["rejections"],
+            "by_dataset":    dict(stats["by_dataset"]),
+            "cluster_health": dict(stats["cluster_health"]),
+        }
+    _draw_dashboard(_render_dashboard(snap, selected, cluster_names, duration, start_time))
+
+    # ── Final summary ─────────────────────────────────────────────────────────
+    print()
+    print(_top())
+    print(_row(" Run Complete"))
+    print(_div())
+    with lock:
+        print(_row(f"  Documents ingested : {stats['docs_ingested']:,}"))
+        print(_row(f"  429 rejections     : {stats['rejections']:,}"))
+    print(_div())
 
     for conf in confs:
         client = clients[conf.name]
-        h  = get_cluster_health(client)
+        h  = dict(get_cluster_health(client))
         rj = get_rejection_counts(client)
-        print(f"\n  [{conf.name}]")
-        print(f"    Cluster status     : {h.get('status', '?').upper()}")
-        print(f"    Active shards      : {h.get('active_shards', '?')}")
-        print(f"    Unassigned shards  : {h.get('unassigned_shards', '?')}")
-        print(f"    Search rejections  : {rj['search']}")
-        print(f"    Write rejections   : {rj['write']}")
+        status = h.get("status", "?").upper()
+        icon = {"GREEN": "🟢", "YELLOW": "🟡", "RED": "🔴"}.get(status, "⚪")
+        print(_row(f"  [{conf.name}]  {icon} {status}"))
+        print(_row(f"    Active shards   : {h.get('active_shards', '?')}"))
+        print(_row(f"    Unassigned      : {h.get('unassigned_shards', '?')}"))
+        print(_row(f"    Search 429s     : {rj['search']}"))
+        print(_row(f"    Write 429s      : {rj['write']}"))
 
-    print()
-    print("  Indices")
-    print("  ─" * 30)
-    print("  Stable data streams : sample-transactions, sample-logs, sample-metrics")
-    print("  Plain reference     : sample-reference")
     if selected:
-        print(f"\n  Induced scenarios (data left in place for agent inspection):")
+        print(_div())
+        print(_row("  Data left in place (use --teardown to clean up)"))
         _problem_indices = {
             "mapping_explosion": "sample-field-explosion",
             "oversharding":      "sample-oversharded",
@@ -470,13 +669,17 @@ def main() -> None:
             "scroll":            "sample-search-stress",
             "red":               "sample-red",
         }
+        seen = set()
         for sid in sorted(selected):
+            idx = _problem_indices.get(sid, "")
             entry = next((s for s in CATALOG if s["id"] == sid), {"label": sid})
-            idx   = _problem_indices.get(sid, "")
-            print(f"    • {sid:<22} {entry.get('label',''):<28} → {idx}")
+            key = (sid, idx)
+            if key not in seen:
+                print(_row(f"    ✓ {sid:<22}  → {idx}"))
+                seen.add(key)
+
+    print(_bot())
     print()
-    print("  To clean up: python3 sample/run.py --teardown")
-    print("═" * 62)
 
 
 if __name__ == "__main__":

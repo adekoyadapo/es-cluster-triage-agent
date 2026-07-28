@@ -150,7 +150,10 @@ def apply_unassigned(client: Elasticsearch, ctx: dict) -> None:
                 },
             },
         )
-        client.index(index="sample-unassigned", document={"@timestamp": "now", "msg": "unassigned scenario seed"})
+        from datetime import datetime, timezone
+        client.index(index="sample-unassigned", document={
+            "@timestamp": datetime.now(timezone.utc).isoformat(), "msg": "unassigned scenario seed"
+        })
         log.info("[unassigned] sample-unassigned created with replicas:3 → YELLOW expected")
     ctx["unassigned"] = True
 
