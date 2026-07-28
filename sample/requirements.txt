@@ -1,0 +1,4 @@
+# sample/ dependencies — install with: pip install -r sample/requirements.txt
+# Note: faker is intentionally absent; data is generated via stdlib synth.py
+elasticsearch>=9,<10
+requests

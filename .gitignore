@@ -1,6 +1,8 @@
 # Environment & credentials
 .env
 .env.local
+values.txt
+sample/.env
 install/.credentials.local
 install/.installed.json
 install/install.log
