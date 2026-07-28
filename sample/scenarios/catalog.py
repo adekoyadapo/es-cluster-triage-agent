@@ -14,62 +14,69 @@ CATALOG: list[dict] = [
     {
         "id":    "mapping_explosion",
         "label": "Mapping bomb",
-        "desc":  "dynamic:true + random field names → hundreds of mapping fields",
+        "desc":  "dynamic:true on sample-field-explosion + random dyn_ fields → thousands of mappings",
         "risk":  "medium",
         "gated": False,
     },
     {
         "id":    "oversharding",
         "label": "Oversharding",
-        "desc":  "12 primary shards, ILM never rolls → too-many tiny shards",
+        "desc":  "12 primary shards on sample-oversharded, ILM never rolls",
         "risk":  "low",
         "gated": False,
     },
     {
         "id":    "slow_cpu",
         "label": "Slow / expensive queries",
-        "desc":  "Wildcard, high-cardinality aggs, script_score → CPU + slowlog hits",
+        "desc":  "Wildcards, high-cardinality aggs, regexp against sample-search-stress → slowlog hits",
         "risk":  "medium",
         "gated": False,
     },
     {
         "id":    "threadpool",
         "label": "Thread-pool rejection",
-        "desc":  "64+ concurrent search + bulk storm → 429 es_rejected_execution",
+        "desc":  "64+ concurrent workers → search queue overflow → 429s",
         "risk":  "medium",
         "gated": False,
     },
     {
-        "id":    "yellow",
-        "label": "Cluster YELLOW",
-        "desc":  "replicas:3 on 3-node cluster → 1 unassignable replica → YELLOW",
+        "id":    "unassigned",
+        "label": "Cluster YELLOW / unassigned shards",
+        "desc":  "sample-unassigned: replicas:3 on 3-node cluster → 1 unassignable → YELLOW",
         "risk":  "low",
         "gated": False,
     },
     {
         "id":    "heap",
         "label": "Heap / circuit-breaker",
-        "desc":  "fielddata on text field + large terms aggs → heap pressure",
+        "desc":  "fielddata:true on text field in sample-search-stress + large terms aggs",
         "risk":  "medium",
         "gated": False,
     },
     {
         "id":    "scroll",
         "label": "Deep pagination / scroll",
-        "desc":  "from:10000+ deep pages + long-lived scroll contexts",
+        "desc":  "from:10000+ deep pages + long-lived scroll contexts on sample-search-stress",
+        "risk":  "low",
+        "gated": False,
+    },
+    {
+        "id":    "hotspot",
+        "label": "Shard write hotspot",
+        "desc":  "All writes routed to shard 0 of sample-hotspot via fixed routing key",
         "risk":  "low",
         "gated": False,
     },
     {
         "id":    "red",
         "label": "Cluster RED",
-        "desc":  "Impossible allocation filter → primary unassignable → RED",
+        "desc":  "sample-red: impossible allocation filter → primary unassignable → RED",
         "risk":  "high",
         "gated": True,
     },
 ]
 
-# Default safe set (everything except RED)
+# Default safe set (all except red)
 DEFAULT_SAFE: set[str] = {s["id"] for s in CATALOG if not s["gated"]}
 
 _ID_TO_ENTRY = {s["id"]: s for s in CATALOG}

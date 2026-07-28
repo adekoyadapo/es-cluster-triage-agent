@@ -13,13 +13,16 @@ pip install -r sample/requirements.txt
 cp sample/.env.example sample/.env
 # Edit sample/.env with your cluster URL + credentials
 
-# 3. Run (interactive scenario picker, 5m default)
+# 3. Run (interactive scenario picker, 10m default)
 python3 sample/run.py
 
-# 4. Targeted 90s validation with specific scenarios
-python3 sample/run.py --duration 90s --problems mapping_explosion,oversharding,slow_cpu,threadpool,yellow
+# 4. Targeted 2m validation with specific scenarios
+python3 sample/run.py --duration 2m --problems mapping_explosion,hotspot,unassigned
 
-# 5. Teardown (removes all sample-* indices, templates, ILM policies)
+# 5. All safe scenarios, 10m run
+python3 sample/run.py --duration 10m --problems safe
+
+# 6. Teardown (removes all sample-* indices, templates, ILM policies)
 python3 sample/run.py --teardown
 ```
 
@@ -27,14 +30,15 @@ python3 sample/run.py --teardown
 
 | id | Anti-pattern | Risk | What it does |
 |----|---|---|---|
-| `mapping_explosion` | Mapping bomb | medium | `dynamic:true` + random field names → thousands of fields |
-| `oversharding` | Too many shards | low | 12 primary shards, ILM never rolls |
-| `slow_cpu` | Expensive queries | medium | Wildcards, high-cardinality aggs, scripts → CPU + slowlog |
-| `threadpool` | 429 rejections | medium | 64 concurrent workers → search/write queue overflow |
-| `yellow` | Cluster YELLOW | low | `replicas:3` on 3 nodes → 1 unassignable → YELLOW |
-| `heap` | Heap / circuit-breaker | medium | `fielddata:true` on text → heap pressure |
-| `scroll` | Deep pagination | low | `from:10000+` + long scroll contexts |
-| `red` | Cluster RED ⚠ | high | Impossible allocation filter → primary unassignable → RED |
+| `mapping_explosion` | Mapping bomb | medium | `dynamic:true` on `sample-field-explosion` + random `dyn_*` fields → thousands of mappings |
+| `oversharding` | Too many shards | low | 12 primary shards on `sample-oversharded`, ILM never rolls |
+| `slow_cpu` | Expensive queries | medium | Wildcards, high-cardinality aggs, regexp against `sample-search-stress` → slowlog hits |
+| `threadpool` | 429 rejections | medium | 64 concurrent workers → search queue overflow → 429s |
+| `unassigned` | Cluster YELLOW | low | `sample-unassigned`: `replicas:3` on 3-node cluster → 1 unassignable → YELLOW |
+| `heap` | Heap / circuit-breaker | medium | `fielddata:true` on text field in `sample-search-stress` + large terms aggs |
+| `scroll` | Deep pagination | low | `from:10000+` + long-lived scroll contexts on `sample-search-stress` |
+| `hotspot` | Shard write hotspot | low | All writes routed to shard 0 of `sample-hotspot` via fixed routing key |
+| `red` | Cluster RED ⚠ | high | `sample-red`: impossible allocation filter → primary unassignable → RED |
 
 **Default:** all scenarios except `red` are active when run without `--problems`.  
 **RED** requires an explicit confirmation prompt; it can disrupt monitoring shipping.
@@ -45,7 +49,7 @@ python3 sample/run.py --teardown
 python3 sample/run.py [options]
 
   --env FILE          .env file path (default: sample/.env)
-  --duration DUR      30s / 5m / 2h  (default: 5m)
+  --duration DUR      30s / 5m / 2h  (default: 10m)
   --problems IDS      comma-separated ids, or 'all' / 'safe' / 'none'
   --interactive       Always show interactive picker
   --teardown          Delete all sample-* resources and exit
@@ -53,7 +57,7 @@ python3 sample/run.py [options]
   -v / --verbose      Debug logging
 ```
 
-## Three datasets
+## Three stable data streams
 
 All datastreams are created with ILM rollover policies and slowlog enabled.
 
@@ -61,7 +65,27 @@ All datastreams are created with ILM rollover policies and slowlog enabled.
 |---|---|---|
 | `sample-transactions` | Genericized transaction records (~1-2 KB/doc) | Revamp of customer mapping.json; text+keyword multifields, monetary sub-objects |
 | `sample-logs` | Java/Spring app logs (~0.5-2 KB/doc) | Weighted levels (INFO 80%, WARN 12%, ERROR 6%); stacktraces on ERROR |
-| `sample-bulky` | Random padded documents (4-10 KB/doc) | Fixed schema `dynamic:false`; large `blob` field for shard-size pressure |
+| `sample-metrics` | System/infra metrics (~200-400 bytes/doc) | ECS-compatible; cpu, memory, filesystem, network, load metricsets; high write rate |
+
+## Plain reference index
+
+| Index | Purpose |
+|---|---|
+| `sample-reference` | Static merchant lookup table (~45 docs); seeded once at setup; simulates an app performing reference data lookups |
+
+## Problem indices (created on demand)
+
+Each scenario creates (or mutates) a dedicated `sample-*` plain index so the induced condition is
+isolated and inspectable after the run.
+
+| Scenario | Index |
+|---|---|
+| `mapping_explosion` | `sample-field-explosion` |
+| `oversharding` | `sample-oversharded` |
+| `unassigned` | `sample-unassigned` |
+| `hotspot` | `sample-hotspot` |
+| `slow_cpu` / `heap` / `scroll` | `sample-search-stress` |
+| `red` | `sample-red` |
 
 ## espipe
 
@@ -79,7 +103,7 @@ espipe --help
 ## .env format
 
 ```
-DURATION=5m
+DURATION=10m
 SEED=42
 
 # Cluster 1 (basic auth)
@@ -98,7 +122,5 @@ Multiple `CLUSTER_<n>_*` blocks → simultaneous multi-cluster ingest.
 
 - All indices/datastreams/templates/ILM policies use the `sample-` prefix.
 - `--teardown` is prefix-scoped: it cannot touch non-sample resources.
-- Never lower `cluster.routing.allocation.disk.watermark.*` globally — the bulky dataset
-  simulates shard-size pressure via growth trends, not actual watermark breach (for short runs).
 - `red` is gated; it creates a throwaway index and will turn the whole cluster RED.
   Only use it in a non-critical environment.

@@ -7,7 +7,7 @@ Usage:
 
 Options:
     --env FILE          Path to .env file (default: sample/.env)
-    --duration DUR      Run duration: 30s / 5m / 2h  (default: 5m)
+    --duration DUR      Run duration: 30s / 5m / 2h  (default: 10m)
     --problems IDS      Comma-separated scenario ids, or 'all'/'safe'/'none'
     --interactive       Always show the scenario picker menu
     --teardown          Delete all sample-* resources and exit
@@ -15,22 +15,22 @@ Options:
     -v / --verbose      Enable DEBUG logging
 
 Examples:
-    python3 sample/run.py --duration 90s --problems mapping_explosion,yellow
-    python3 sample/run.py --duration 5m
+    python3 sample/run.py --duration 10m
+    python3 sample/run.py --duration 2m --problems mapping_explosion,hotspot,unassigned
     python3 sample/run.py --teardown
 """
 from __future__ import annotations
 
 import argparse
+import json
 import logging
 import os
 import sys
 import time
 import threading
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
-# Ensure the repo root is on the path when run as a script
 _REPO_ROOT = Path(__file__).resolve().parent.parent
 if str(_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT))
@@ -38,28 +38,140 @@ if str(_REPO_ROOT) not in sys.path:
 from sample.config import ClusterConf, load_env, build_clusters, parse_duration, collect_interactive
 from sample.synth import SynthGen
 from sample.es_admin import make_client, setup_all, teardown_all, get_cluster_health, get_rejection_counts
-from sample.espipe_runner import ensure_espipe, ingest_lines, ingest_oversharded
-from sample.datasets import DATASETS, TransactionsDataset, JavaLogsDataset, BulkyDataset
+from sample.espipe_runner import ensure_espipe, ingest_lines
+from sample.datasets import DATASETS, TransactionsDataset, JavaLogsDataset, MetricsDataset
 from sample.scenarios.catalog import CATALOG, DEFAULT_SAFE, interactive_picker, confirm_red
 from sample.scenarios.problems import apply_problems
 
 log = logging.getLogger("sample")
 
 _TICK_INTERVAL = 10  # seconds between ingest ticks
+
+# Docs generated per tick per dataset
 _BATCH_SIZES = {
-    "transactions": 200,
-    "javalogs":     500,
-    "bulky":         30,
+    "transactions": 150,
+    "javalogs":     400,
+    "metrics":      800,  # high write rate — small docs
 }
 
-# ── Query workers ─────────────────────────────────────────────────────────────
+
+# ── Ingest helpers ─────────────────────────────────────────────────────────────
+
+def _ingest_with_routing(client, docs: list[dict], index_name: str, routing_key: str) -> int:
+    """Bulk-index docs into a plain index with a fixed routing key."""
+    from elasticsearch.helpers import bulk as es_bulk
+    def _gen():
+        for d in docs:
+            yield {"_index": index_name, "_routing": routing_key, **d}
+    try:
+        ok, _ = es_bulk(client, _gen(), raise_on_error=False, max_retries=1)
+        return ok
+    except Exception as e:
+        log.debug("routing ingest error: %s", e)
+        return 0
+
+
+def _generate_field_explosion_lines(synth: SynthGen, n: int):
+    """Each doc includes 5-10 random dyn_* fields to grow the mapping."""
+    for _ in range(n):
+        doc = {
+            "@timestamp": synth.ts_now_iso(),
+            "message": synth.lorem_words(3),
+            "tag": "explosion",
+        }
+        for _ in range(synth._int(5, 10)):
+            doc[synth.random_field_name()] = synth._float(0, 100)
+        yield json.dumps(doc)
+
+
+def _generate_search_stress_lines(synth: SynthGen, n: int):
+    """Transaction-like docs with longer text fields for search stress index."""
+    for _ in range(n):
+        doc = {
+            "@timestamp": synth.ts_now_iso(),
+            "message":  synth.lorem_words(synth._int(15, 40)),
+            "category": synth.category(),
+            "value":    synth._float(0, 10_000),
+            "tag":      synth.merchant_name(),
+            "user_ref": synth.party_ref(),
+        }
+        yield json.dumps(doc)
+
+
+def _generate_oversharded_lines(synth: SynthGen, n: int):
+    for _ in range(n):
+        doc = {
+            "@timestamp": synth.ts_now_iso(),
+            "message": synth.lorem_words(5),
+            "value":   synth._float(0, 100),
+            "tag":     "overshard",
+        }
+        yield json.dumps(doc)
+
+
+def _do_ingest_tick(confs: list[ClusterConf], clients: dict, synth: SynthGen,
+                    problems: set[str], stats: dict, lock: threading.Lock) -> None:
+    """Generate one batch per dataset and ingest into all clusters."""
+    for ds_cls in DATASETS:
+        n = _BATCH_SIZES.get(ds_cls.name, 100)
+
+        if ds_cls.name == "transactions":
+            lines = list(TransactionsDataset.generate_ndjson_lines(synth, n, False))
+        elif ds_cls.name == "javalogs":
+            lines = list(JavaLogsDataset.generate_ndjson_lines(synth, n, False))
+        else:
+            lines = list(MetricsDataset.generate_ndjson_lines(synth, n))
+
+        for conf in confs:
+            result = ingest_lines(iter(lines), conf, ds_cls.datastream)
+            with lock:
+                stats["docs_ingested"] += result.get("docs_sent", 0)
+
+    # ── Problem-specific ingest ────────────────────────────────────────────────
+    if "oversharding" in problems:
+        ov_lines = list(_generate_oversharded_lines(synth, 200))
+        for conf in confs:
+            r = ingest_lines(iter(ov_lines), conf, "sample-oversharded", action="index")
+            with lock:
+                stats["docs_ingested"] += r.get("docs_sent", 0)
+
+    if "mapping_explosion" in problems:
+        ex_lines = list(_generate_field_explosion_lines(synth, 100))
+        for conf in confs:
+            r = ingest_lines(iter(ex_lines), conf, "sample-field-explosion", action="index")
+            with lock:
+                stats["docs_ingested"] += r.get("docs_sent", 0)
+
+    if "hotspot" in problems:
+        hotspot_docs = [
+            {
+                "@timestamp":    synth.ts_now_iso(),
+                "message":       synth.lorem_words(5),
+                "value":         synth._float(0, 100),
+                "partition_key": "hot_partition",
+                "tag":           "hotspot",
+            }
+            for _ in range(300)
+        ]
+        for conf in confs:
+            client = clients[conf.name]
+            ok = _ingest_with_routing(client, hotspot_docs, "sample-hotspot", "hot_partition")
+            with lock:
+                stats["docs_ingested"] += ok
+
+    # Always feed search-stress if it may be targeted by queries
+    if problems & {"slow_cpu", "heap", "scroll", "threadpool"}:
+        ss_lines = list(_generate_search_stress_lines(synth, 50))
+        for conf in confs:
+            r = ingest_lines(iter(ss_lines), conf, "sample-search-stress", action="index")
+            with lock:
+                stats["docs_ingested"] += r.get("docs_sent", 0)
+
+
+# ── Query workers ──────────────────────────────────────────────────────────────
 
 def _query_worker(client, problems: set[str], stop_event: threading.Event,
-                  counter: dict, lock: threading.Lock):
-    """
-    Runs in a background thread. Issues a mix of healthy + expensive queries
-    depending on active problems.
-    """
+                  counter: dict, lock: threading.Lock) -> None:
     import random
     rng = random.Random()
     rejections = 0
@@ -75,66 +187,61 @@ def _query_worker(client, problems: set[str], stop_event: threading.Event,
 
     while not stop_event.is_set():
         try:
-            # Healthy baseline queries (always run)
+            # Healthy baseline — run against all 3 data streams
             _search({"query": {"match_all": {}}, "size": 10})
-            _search({"query": {"term": {"transaction.status": "approved"}}, "size": 5})
+            _search({"query": {"match_all": {}}, "size": 5}, index="sample-logs*")
+            _search({"query": {"match_all": {}}, "size": 5}, index="sample-metrics*")
 
-            # Problem-specific expensive queries
+            # Reference index lookups (simulates app reading lookup data)
+            _search({"query": {"term": {"active": True}}, "size": 20}, index="sample-reference")
+
             if "slow_cpu" in problems:
-                # Leading wildcard (expensive)
+                # Expensive queries against search-stress
                 _search({"query": {"query_string": {
-                    "query": f"transaction.merchant_name:*{rng.choice(['mart', 'shop', 'store', 'hub'])}*"
-                }}, "size": 5})
-                # High-cardinality terms agg
+                    "query": f"*{rng.choice(['lorem', 'ipsum', 'dolor', 'amet'])}*"
+                }}, "size": 5}, index="sample-search-stress")
                 _search({
                     "size": 0,
                     "aggs": {
-                        "by_merchant": {
-                            "terms": {"field": "transaction.merchant_ref.keyword", "size": 10000},
-                            "aggs": {"unique_parties": {"cardinality": {"field": "transaction.party_ref.keyword"}}}
+                        "by_tag": {
+                            "terms": {"field": "tag", "size": 10000},
+                            "aggs": {"unique_users": {"cardinality": {"field": "user_ref"}}}
                         }
                     }
-                })
-                # Regexp query
+                }, index="sample-search-stress")
                 _search({"query": {"regexp": {
-                    "transaction.account_ref.keyword": f"ACC-[0-9]{{{rng.randint(4, 6)}}}"
-                }}, "size": 5})
+                    "user_ref": f"PTY-[0-9]{{{rng.randint(4, 6)}}}"
+                }}, "size": 5}, index="sample-search-stress")
 
             if "heap" in problems:
-                # fielddata blowup: agg on a text field with fielddata:true
+                # fielddata blowup: agg on text field with fielddata:true
                 _search({
                     "size": 0,
-                    "aggs": {
-                        "merchant_text": {
-                            "terms": {"field": "transaction.merchant_name", "size": 10000}
-                        }
-                    }
-                })
+                    "aggs": {"message_terms": {"terms": {"field": "message", "size": 10000}}}
+                }, index="sample-search-stress")
 
             if "scroll" in problems:
-                # Deep pagination (expensive from: offset)
                 offset = rng.choice([5000, 10000, 20000, 50000])
                 try:
-                    client.search(index="sample-transactions*",
-                                  body={"from": offset, "size": 10, "query": {"match_all": {}}},
-                                  request_timeout=30)
+                    client.search(
+                        index="sample-search-stress",
+                        body={"from": offset, "size": 10, "query": {"match_all": {}}},
+                        request_timeout=30,
+                    )
                 except Exception as e:
                     if "429" in str(e) or "rejected" in str(e).lower():
                         rejections += 1
-                # Open a scroll context and leave it (simulates resource leak)
                 try:
-                    scroll_resp = client.search(
+                    client.search(
                         index="sample-*", scroll="5m",
                         body={"size": 100, "query": {"match_all": {}}},
                         request_timeout=30,
                     )
-                    # Intentionally NOT clearing the scroll context
+                    # Intentionally NOT clearing the scroll — resource leak
                 except Exception:
                     pass
 
             if "threadpool" in problems:
-                # Bulk storm: fire many concurrent small bulk requests
-                # (handled by the thread-pool worker count in run.py)
                 _search({"query": {"match_all": {}}, "size": 100}, index="sample-*")
 
         except Exception:
@@ -143,43 +250,10 @@ def _query_worker(client, problems: set[str], stop_event: threading.Event,
         with lock:
             counter["rejections"] += rejections
         rejections = 0
-        time.sleep(rng.uniform(0.05, 0.3))  # pace the worker slightly
+        time.sleep(rng.uniform(0.05, 0.3))
 
 
-# ── Ingest helpers ────────────────────────────────────────────────────────────
-
-def _do_ingest_tick(confs: list[ClusterConf], synth: SynthGen,
-                    problems: set[str], stats: dict, lock: threading.Lock) -> None:
-    """Generate one batch per dataset and ingest into all clusters."""
-    inject_dynamic = "mapping_explosion" in problems
-    inject_mdc     = "mapping_explosion" in problems
-
-    for ds_cls in DATASETS:
-        n = _BATCH_SIZES.get(ds_cls.name, 100)
-
-        if ds_cls.name == "transactions":
-            lines = list(TransactionsDataset.generate_ndjson_lines(synth, n, inject_dynamic))
-        elif ds_cls.name == "javalogs":
-            lines = list(JavaLogsDataset.generate_ndjson_lines(synth, n, inject_mdc))
-        else:
-            lines = list(BulkyDataset.generate_ndjson_lines(synth, n))
-
-        for conf in confs:
-            result = ingest_lines(iter(lines), conf, ds_cls.datastream)
-            with lock:
-                stats["docs_ingested"] += result.get("docs_sent", 0)
-
-    # Oversharding feed
-    if "oversharding" in problems:
-        ov_lines = [
-            f'{{"@timestamp": "{synth.ts_now_iso()}", "message": "{synth.lorem_words(10)}", "value": {synth._float(0, 100)}, "tag": "sample"}}'
-            for _ in range(200)
-        ]
-        for conf in confs:
-            ingest_oversharded(iter(ov_lines), conf)
-
-
-# ── Main ──────────────────────────────────────────────────────────────────────
+# ── Main ───────────────────────────────────────────────────────────────────────
 
 def main() -> None:
     parser = argparse.ArgumentParser(
@@ -213,7 +287,7 @@ def main() -> None:
 
     # ── Load config ───────────────────────────────────────────────────────────
     confs: list[ClusterConf] = []
-    duration = 300  # default 5m
+    duration = 600  # default 10m
 
     if env_path and env_path.exists():
         vals = load_env(env_path)
@@ -238,6 +312,7 @@ def main() -> None:
 
     # ── Build clients ─────────────────────────────────────────────────────────
     clients = {conf.name: make_client(conf) for conf in confs}
+    synth = SynthGen(seed=args.seed)
 
     # ── Teardown mode ─────────────────────────────────────────────────────────
     if args.teardown:
@@ -260,7 +335,7 @@ def main() -> None:
         elif raw in ("safe", "none"):
             selected = set(DEFAULT_SAFE) if raw == "safe" else set()
         else:
-            selected = set(p.strip() for p in raw.split(",") if p.strip())
+            selected = {p.strip() for p in raw.split(",") if p.strip()}
     elif args.interactive or not args.problems:
         initial = None
         if args.problems == "none":
@@ -292,8 +367,8 @@ def main() -> None:
     print("  Setting up cluster resources...")
     for conf in confs:
         client = clients[conf.name]
-        print(f"  [{conf.name}] configuring ILM, templates, datastreams...")
-        setup_all(client)
+        print(f"  [{conf.name}] configuring ILM, templates, datastreams, plain indices...")
+        setup_all(client, synth)
 
         if selected:
             print(f"  [{conf.name}] applying problem scenarios...")
@@ -301,8 +376,8 @@ def main() -> None:
 
         h = get_cluster_health(client)
         print(f"  [{conf.name}] cluster health: {h.get('status', '?')}  "
-              f"(shards: {h.get('active_shards',0)} active, "
-              f"{h.get('unassigned_shards',0)} unassigned)")
+              f"(shards: {h.get('active_shards', 0)} active, "
+              f"{h.get('unassigned_shards', 0)} unassigned)")
 
     print()
 
@@ -311,12 +386,11 @@ def main() -> None:
     lock = threading.Lock()
 
     # ── Query worker pool ─────────────────────────────────────────────────────
-    # Higher concurrency when threadpool scenario active (to trigger 429s)
-    n_query_workers = 64 if "threadpool" in selected else 4
+    n_query_workers = 64 if "threadpool" in selected else 6
     stop_event = threading.Event()
+    executor = ThreadPoolExecutor(max_workers=n_query_workers, thread_name_prefix="qw")
     query_futures = []
 
-    executor = ThreadPoolExecutor(max_workers=n_query_workers, thread_name_prefix="qw")
     for conf in confs:
         client = clients[conf.name]
         for _ in range(n_query_workers):
@@ -324,7 +398,6 @@ def main() -> None:
             query_futures.append(f)
 
     # ── Main ingest loop ──────────────────────────────────────────────────────
-    synth = SynthGen(seed=args.seed)
     deadline = time.time() + duration
     tick = 0
 
@@ -334,19 +407,17 @@ def main() -> None:
     try:
         while time.time() < deadline:
             tick += 1
-            elapsed = int(time.time() - (deadline - duration))
+            elapsed   = int(time.time() - (deadline - duration))
             remaining = max(0, int(deadline - time.time()))
 
-            # Ingest tick
-            _do_ingest_tick(confs, synth, selected, stats, lock)
+            _do_ingest_tick(confs, clients, synth, selected, stats, lock)
 
-            # Progress line
             with lock:
                 docs = stats["docs_ingested"]
                 rejs = stats["rejections"]
             print(
                 f"\r  [{elapsed:4d}s / {duration}s]  "
-                f"docs: {docs:>8,}  "
+                f"docs: {docs:>9,}  "
                 f"429s: {rejs:>5}  "
                 f"remaining: {remaining}s   ",
                 end="", flush=True,
@@ -373,7 +444,7 @@ def main() -> None:
 
     for conf in confs:
         client = clients[conf.name]
-        h = get_cluster_health(client)
+        h  = get_cluster_health(client)
         rj = get_rejection_counts(client)
         print(f"\n  [{conf.name}]")
         print(f"    Cluster status     : {h.get('status', '?').upper()}")
@@ -383,13 +454,28 @@ def main() -> None:
         print(f"    Write rejections   : {rj['write']}")
 
     print()
+    print("  Indices")
+    print("  ─" * 30)
+    print("  Stable data streams : sample-transactions, sample-logs, sample-metrics")
+    print("  Plain reference     : sample-reference")
     if selected:
-        print("  Induced scenarios (data left in place for agent inspection):")
+        print(f"\n  Induced scenarios (data left in place for agent inspection):")
+        _problem_indices = {
+            "mapping_explosion": "sample-field-explosion",
+            "oversharding":      "sample-oversharded",
+            "unassigned":        "sample-unassigned",
+            "hotspot":           "sample-hotspot",
+            "slow_cpu":          "sample-search-stress",
+            "heap":              "sample-search-stress",
+            "scroll":            "sample-search-stress",
+            "red":               "sample-red",
+        }
         for sid in sorted(selected):
             entry = next((s for s in CATALOG if s["id"] == sid), {"label": sid})
-            print(f"    • {sid:<22} {entry.get('label', '')}")
-        print()
-        print("  To clean up: python3 sample/run.py --teardown")
+            idx   = _problem_indices.get(sid, "")
+            print(f"    • {sid:<22} {entry.get('label',''):<28} → {idx}")
+    print()
+    print("  To clean up: python3 sample/run.py --teardown")
     print("═" * 62)
 
 

@@ -48,15 +48,17 @@ def make_client(conf: ClusterConf) -> Elasticsearch:
 
 
 # ── Setup ─────────────────────────────────────────────────────────────────────
-def setup_all(client: Elasticsearch) -> None:
+def setup_all(client: Elasticsearch, synth=None) -> None:
     """
     Idempotent cluster setup: ILM → component templates → index templates →
-    data streams → slowlog on existing backing indices.
+    data streams → plain supporting indices → slowlog on existing backing indices.
     """
     _setup_ilm(client)
     _setup_component_templates(client)
     _setup_index_templates(client)
     _setup_datastreams(client)
+    if synth is not None:
+        setup_plain_indices(client, synth)
     _refresh_slowlog(client)
     log.info("Cluster setup complete")
 
@@ -135,6 +137,121 @@ def _refresh_slowlog(client: Elasticsearch) -> None:
     apply_healthy(client)
 
 
+def setup_plain_indices(client: Elasticsearch, synth) -> None:
+    """Create the plain (non-datastream) supporting indices: reference + problem bases."""
+    _setup_reference_index(client, synth)
+    _setup_search_stress(client)
+
+
+def _setup_reference_index(client: Elasticsearch, synth) -> None:
+    """Create sample-reference static lookup index and seed ~50 merchant records."""
+    try:
+        client.indices.create(
+            index="sample-reference",
+            body={
+                "settings": {
+                    "index.number_of_shards": 1,
+                    "index.number_of_replicas": 1,
+                    "index.search.slowlog.threshold.query.warn": "2s",
+                    "index.search.slowlog.include.user": True,
+                },
+                "mappings": {
+                    "dynamic": False,
+                    "properties": {
+                        "merchant_ref":  {"type": "keyword"},
+                        "merchant_name": {"type": "keyword"},
+                        "category":      {"type": "keyword"},
+                        "sub_category":  {"type": "keyword"},
+                        "country":       {"type": "keyword"},
+                        "currency_code": {"type": "keyword"},
+                        "active":        {"type": "boolean"},
+                        "tier":          {"type": "keyword"},
+                        "fee_pct":       {"type": "float"},
+                        "description":   {"type": "text"},
+                        "created_at":    {"type": "date"},
+                        "updated_at":    {"type": "date"},
+                    },
+                },
+            },
+        )
+        log.info("Plain index created: sample-reference")
+    except Exception as e:
+        if "already_exists" in str(e).lower():
+            log.info("Plain index already exists: sample-reference")
+            return
+        log.warning("sample-reference create: %s", e)
+        return
+
+    # Seed merchant lookup data
+    _MERCHANTS = [
+        "AcmeRetail", "GlobalMart", "TechHub", "FreshGrocer", "QuickFuel",
+        "UrbanDiner", "CloudStore", "FitnessPro", "TravelDeal", "HomeGoods",
+        "DigitalWorld", "CafeBlend", "AutoParts", "MedSupply", "BookNook",
+    ]
+    _COUNTRIES = ["US", "GB", "DE", "FR", "JP", "CA", "AU", "SG"]
+    _TIERS = ["standard", "premium", "enterprise"]
+    from datetime import datetime, timezone
+    now = datetime.now(timezone.utc).isoformat()
+
+    bulk_body = []
+    for i, name in enumerate(_MERCHANTS * 3):
+        ref = f"MCH-{i+10001}"
+        bulk_body.append({"index": {"_index": "sample-reference", "_id": ref}})
+        bulk_body.append({
+            "merchant_ref":  ref,
+            "merchant_name": name,
+            "category":      synth._choice(["retail", "grocery", "fuel", "dining", "travel"]),
+            "sub_category":  synth._choice(["in-store", "online", "mobile"]),
+            "country":       synth._choice(_COUNTRIES),
+            "currency_code": synth._choice(["USD", "EUR", "GBP"]),
+            "active":        synth._rng.random() > 0.1,
+            "tier":          synth._choice(_TIERS),
+            "fee_pct":       round(synth._rng.uniform(0.5, 3.5), 2),
+            "description":   f"{name} merchant partner",
+            "created_at":    now,
+            "updated_at":    now,
+        })
+
+    try:
+        client.bulk(body=bulk_body, refresh=True)
+        log.info("Seeded %d docs into sample-reference", len(bulk_body) // 2)
+    except Exception as e:
+        log.warning("sample-reference seed: %s", e)
+
+
+def _setup_search_stress(client: Elasticsearch) -> None:
+    """Create sample-search-stress plain index used by slow_cpu, heap, scroll scenarios."""
+    try:
+        client.indices.create(
+            index="sample-search-stress",
+            body={
+                "settings": {
+                    "index.number_of_shards": 2,
+                    "index.number_of_replicas": 1,
+                    "index.search.slowlog.threshold.query.warn": "2s",
+                    "index.search.slowlog.include.user": True,
+                },
+                "mappings": {
+                    "dynamic": False,
+                    "properties": {
+                        "@timestamp": {"type": "date"},
+                        "message":    {"type": "text", "fields": {"keyword": {"type": "keyword", "ignore_above": 256}}},
+                        "category":   {"type": "keyword"},
+                        "value":      {"type": "float"},
+                        "tag":        {"type": "keyword"},
+                        "user_ref":   {"type": "keyword"},
+                    },
+                },
+            },
+        )
+        log.info("Plain index created: sample-search-stress")
+    except Exception as e:
+        if "already_exists" in str(e).lower():
+            log.info("Plain index already exists: sample-search-stress")
+        else:
+            log.warning("sample-search-stress create: %s", e)
+
+
 # ── Teardown ──────────────────────────────────────────────────────────────────
 def teardown_all(client: Elasticsearch) -> None:
     """
@@ -197,7 +314,7 @@ def teardown_all(client: Elasticsearch) -> None:
     ilm_names = [
         "sample-transactions-ilm",
         "sample-logs-ilm",
-        "sample-bulky-ilm",
+        "sample-metrics-ilm",
         "sample-never-roll-ilm",
     ]
     for name in ilm_names:

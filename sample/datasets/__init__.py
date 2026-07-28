@@ -1,6 +1,6 @@
-"""DATASETS registry — imported by run.py and es_admin.py."""
+"""DATASETS registry — ordered list of datastream dataset classes."""
 from .transactions import TransactionsDataset
 from .javalogs import JavaLogsDataset
-from .bulky import BulkyDataset
+from .metrics import MetricsDataset
 
-DATASETS = [TransactionsDataset, JavaLogsDataset, BulkyDataset]
+DATASETS = [TransactionsDataset, JavaLogsDataset, MetricsDataset]
