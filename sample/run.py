@@ -305,6 +305,8 @@ def _query_worker(client, problems: set[str], stop_event: threading.Event,
 
     def _search(body: dict, index: str = "sample-transactions*") -> None:
         nonlocal local_rej
+        if stop_event.is_set():
+            return
         try:
             client.search(index=index, body=body, request_timeout=30)
         except Exception as e:
@@ -375,7 +377,7 @@ def _query_worker(client, problems: set[str], stop_event: threading.Event,
         with lock:
             stats["rejections"] += local_rej
         local_rej = 0
-        time.sleep(rng.uniform(0.05, 0.3))
+        stop_event.wait(rng.uniform(0.05, 0.3))
 
 
 # ── Setup helpers ──────────────────────────────────────────────────────────────
@@ -580,16 +582,20 @@ def main() -> None:
             executor.submit(_query_worker, clients[conf.name], selected, stop_event, stats, lock)
 
     # ── Main ingest loop ──────────────────────────────────────────────────────
-    start_time = time.time()
-    deadline   = start_time + duration
-    tick       = 0
+    start_time    = time.time()
+    deadline      = start_time + duration
+    tick          = 0
+    interrupted   = False
 
     try:
-        while time.time() < deadline:
+        while time.time() < deadline and not stop_event.is_set():
             tick += 1
 
             # Ingest
             _do_ingest_tick(confs, clients, synth, selected, stats, lock)
+
+            if stop_event.is_set():
+                break
 
             # Refresh cluster health every N ticks
             if tick % _HEALTH_EVERY == 0:
@@ -615,29 +621,47 @@ def main() -> None:
             dash_lines = _render_dashboard(snap, selected, cluster_names, duration, start_time)
             _draw_dashboard(dash_lines)
 
-            time.sleep(_TICK_INTERVAL)
+            # Interruptible sleep — wakes immediately when stop_event is set
+            stop_event.wait(_TICK_INTERVAL)
 
     except KeyboardInterrupt:
-        pass  # handled below
+        interrupted = True
+        stop_event.set()
+        # Move below the dashboard and print a clear stop notice
+        global _dashboard_height
+        if _dashboard_height:
+            sys.stdout.write("\n")
+        sys.stdout.write(f"\033[2K{_PFX}  Ctrl+C received — stopping…\n\n")
+        sys.stdout.flush()
+        _dashboard_height = 0  # prevent final draw from cursor-upping over this message
 
     # ── Shutdown ──────────────────────────────────────────────────────────────
     stop_event.set()
+    # Allow in-flight worker requests to drain before hard-stopping
+    time.sleep(1.5)
     executor.shutdown(wait=False)
 
-    # Final dashboard draw
-    with lock:
-        snap = {
-            "docs_ingested": stats["docs_ingested"],
-            "rejections":    stats["rejections"],
-            "by_dataset":    dict(stats["by_dataset"]),
-            "cluster_health": dict(stats["cluster_health"]),
-        }
-    _draw_dashboard(_render_dashboard(snap, selected, cluster_names, duration, start_time))
+    # Final dashboard draw (only if not interrupted mid-draw)
+    if not interrupted:
+        with lock:
+            snap = {
+                "docs_ingested": stats["docs_ingested"],
+                "rejections":    stats["rejections"],
+                "by_dataset":    dict(stats["by_dataset"]),
+                "cluster_health": dict(stats["cluster_health"]),
+            }
+        _draw_dashboard(_render_dashboard(snap, selected, cluster_names, duration, start_time))
+        print()
 
     # ── Final summary ─────────────────────────────────────────────────────────
-    print()
+    elapsed = time.time() - start_time
+    def _fmt_t(s): return f"{int(s // 60)}m {int(s % 60):02d}s"
+
     print(_top())
-    print(_row(" Run Complete"))
+    if interrupted:
+        print(_row(f" Stopped early after {_fmt_t(elapsed)}"))
+    else:
+        print(_row(f" Run Complete  ({_fmt_t(elapsed)})"))
     print(_div())
     with lock:
         print(_row(f"  Documents ingested : {stats['docs_ingested']:,}"))
