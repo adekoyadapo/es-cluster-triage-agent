@@ -836,14 +836,23 @@ def deploy_workflow_yaml(
     kb_url: str, hdr: tuple[str, str], namespace: str,
     workflow_id: str, yaml_text: str, wf_name: str = "",
 ) -> None:
-    """Delete-then-POST to bypass Kibana's soft-delete tombstone (which causes
-    409 on re-create after uninstall).  Falls back to PUT if POST still 409s.
-    Raises WorkflowPermissionError on 403 so callers can handle gracefully."""
+    """Deploy a workflow using the Kibana Workflows API.
+
+    Kibana soft-deletes workflow records: DELETE sets a tombstone that blocks a
+    new POST with 409, but the same tombstoned record also fails PUT with 404.
+    The reliable sequence is:
+      1. DELETE  (clears or marks tombstone)
+      2. Sleep 2 s (give Kibana time to propagate the delete)
+      3. POST    (should succeed now that tombstone cleared)
+      4. If 409  → check with GET whether a live record still exists
+         · GET succeeds → live record: use PUT to update it
+         · GET 404      → tombstone race: sleep 3 s and retry POST once
+      5. Still failing → warn; caller sees the warning and workflow is not deployed.
+
+    Raises WorkflowPermissionError on 403 so callers can handle gracefully.
+    """
     wf_path = space_path(namespace, f"/api/workflows/workflow/{workflow_id}")
 
-    # Kibana soft-deletes workflows: DELETE returns 200 but the ID stays
-    # tombstoned, so a fresh POST always hits 409.  Pre-delete to clear the
-    # tombstone, then POST a clean record.
     try:
         kibana_request(kb_url, hdr, "DELETE", wf_path)
         log(f"  Pre-deleted existing workflow: {workflow_id}")
@@ -851,31 +860,52 @@ def deploy_workflow_yaml(
         del_str = str(del_exc)
         if "HTTP 403" in del_str:
             raise WorkflowPermissionError(del_str)
-        # 404 = not there yet, anything else we ignore and try POST anyway
+        # 404 = not yet deployed — fine, continue
+
+    # Give Kibana 2 s to propagate the tombstone clear before POST
+    time.sleep(2)
 
     body: dict[str, Any] = {"id": workflow_id, "yaml": yaml_text}
     if wf_name:
         body["name"] = wf_name
+
     try:
         kibana_request(kb_url, hdr, "POST", space_path(namespace, "/api/workflows/workflow"), body=body)
+        return  # success
     except RuntimeError as exc:
         exc_str = str(exc)
         if "HTTP 403" in exc_str:
             raise WorkflowPermissionError(exc_str)
         if "HTTP 409" not in exc_str:
             raise
-        # Still 409 after pre-delete — update in place and force enabled=true
-        # to escape any residual disabled state.
+
+    # 409: ID conflict — check if there is actually a live record to update
+    existing = get_if_exists(kb_url, hdr, wf_path)
+    if existing:
+        # Live record exists → update it in place
         put_body: dict[str, Any] = {"yaml": yaml_text, "enabled": True}
         if wf_name:
             put_body["name"] = wf_name
         try:
             kibana_request(kb_url, hdr, "PUT", wf_path, body=put_body)
+            return  # success via PUT
         except RuntimeError as put_exc:
             put_str = str(put_exc)
             if "HTTP 403" in put_str:
                 raise WorkflowPermissionError(put_str)
-            warn(f"Workflow update: {put_exc}")
+            warn(f"Workflow PUT failed: {put_exc}")
+            return  # warn and move on — deploy attempted
+    else:
+        # Tombstone race (409 but no live record) — sleep and retry POST once
+        log(f"  Tombstone race for {workflow_id} — sleeping 3 s then retrying POST")
+        time.sleep(3)
+        try:
+            kibana_request(kb_url, hdr, "POST", space_path(namespace, "/api/workflows/workflow"), body=body)
+        except RuntimeError as retry_exc:
+            retry_str = str(retry_exc)
+            if "HTTP 403" in retry_str:
+                raise WorkflowPermissionError(retry_str)
+            warn(f"Workflow deploy failed after retry: {retry_exc}")
 
 
 # ── [6] Deploy ─────────────────────────────────────────────────────────────────
@@ -1000,32 +1030,43 @@ def deploy_workflows(
     namespace: str,
     ds_info: dict[str, str],
     installed: dict[str, Any],
+    preset_connector_id: str = "",
 ) -> None:
+    """Deploy or re-deploy all workflow YAMLs.
+
+    When ``preset_connector_id`` is provided (e.g. from ``--workflows-only``),
+    the Slack webhook prompt is skipped and that connector ID is embedded directly.
+    """
     step(7, "Workflow Setup")
 
     kb_url = creds["KB_URL"]
     monitoring_ds = ds_info["monitoring_ds"]
     deployed_agent_id = installed.get("agent_id", AGENT_ID)
 
-    # Ask for Slack webhook BEFORE the workflow type menu so there are no
-    # unexpected prompts mid-choice.
-    print(f"""
+    # If a connector ID was passed in (--workflows-only reuse path), skip the prompt.
+    if preset_connector_id:
+        slack_connector_id = preset_connector_id
+        ok(f"Reusing saved Slack connector: {slack_connector_id}")
+    else:
+        # Ask for Slack webhook BEFORE the workflow type menu so there are no
+        # unexpected prompts mid-choice.
+        print(f"""
   {c(CYAN, "Slack notifications")}
   Workflows can post triage summaries to a Slack channel via a webhook connector.
   Enter your Slack webhook URL to enable, or leave blank to skip.
     """)
-    slack_webhook = ask_secret("Slack webhook URL (or leave blank to skip)", show_prefix=30)
-    slack_connector_id = ""
-    if slack_webhook:
-        try:
-            slack_connector_id = provision_connector(kb_url, hdr, namespace, slack_webhook)
-            installed["connector_id"] = slack_connector_id
-            ok(f"Slack connector ready: {slack_connector_id}")
-        except RuntimeError as exc:
-            warn(f"Slack connector failed: {exc}")
-            info("Workflows will deploy without a Slack step — add it manually in Kibana")
-    else:
-        info("Skipping Slack — workflows will deploy without a notification step")
+        slack_webhook = ask_secret("Slack webhook URL (or leave blank to skip)", show_prefix=30)
+        slack_connector_id = ""
+        if slack_webhook:
+            try:
+                slack_connector_id = provision_connector(kb_url, hdr, namespace, slack_webhook)
+                installed["connector_id"] = slack_connector_id
+                ok(f"Slack connector ready: {slack_connector_id}")
+            except RuntimeError as exc:
+                warn(f"Slack connector failed: {exc}")
+                info("Workflows will deploy without a Slack step — add it manually in Kibana")
+        else:
+            info("Skipping Slack — workflows will deploy without a notification step")
 
     print(f"""
   {c(CYAN, "Workflow Options")}
@@ -1885,6 +1926,37 @@ def _load_session_from_creds_file() -> tuple[dict[str, str], tuple[str, str], st
 def main() -> int:
     open_log()
 
+    # ── --workflows-only / -w flag: re-deploy workflows without full reinstall ─
+    workflows_only = "--workflows-only" in sys.argv or "-w" in sys.argv
+    if workflows_only:
+        print_banner()
+        print(c(CYAN + BOLD, "  Mode: Workflow-only deploy (--workflows-only)"))
+        print(c(DIM, "  Re-renders and re-deploys all workflow YAMLs using the saved install context."))
+        print(c(DIM, "  Agents, tools, and skills are NOT touched."))
+        print(c(DIM, f"  Loading saved session from {CREDS_FILE}"))
+        print(c(DIM, f"  Install log: {LOG_FILE}"))
+        try:
+            creds, hdr, namespace, ds_info, installed = _load_session_from_creds_file()
+            validate_auth(creds, hdr)
+            saved_connector = installed.get("connector_id", "")
+            deploy_workflows(creds, hdr, namespace, ds_info, installed,
+                             preset_connector_id=saved_connector)
+            verify_deployment(creds, hdr, namespace)
+        except SystemExit:
+            raise
+        except KeyboardInterrupt:
+            print(f"\n\n  {c(YELLOW, 'Interrupted.')}")
+            return 1
+        except RuntimeError as exc:
+            print(f"\n\n  {c(RED + BOLD, 'Failed:')}")
+            print(f"  {c(RED, str(exc))}")
+            print(f"  {c(DIM, f'See log: {LOG_FILE}')}")
+            log(f"FATAL: {exc}")
+            return 1
+        finally:
+            close_log()
+        return 0
+
     # ── --optional-only / -o flag: skip straight to step 10 ──────────────────
     optional_only = "--optional-only" in sys.argv or "-o" in sys.argv
     if optional_only:
@@ -1916,7 +1988,8 @@ def main() -> int:
     print(c(DIM, "  Deploys the Elasticsearch Cluster Triage Agent into any Kibana space."))
     print(c(DIM, "  Credentials are stored locally and never displayed."))
     print(c(DIM, f"  Install log: {LOG_FILE}"))
-    print(c(DIM, f"  Tip: python3 install/install.py --optional-only  (re-run step 10 only)"))
+    print(c(DIM, f"  Tip: python3 install/install.py --workflows-only  (re-deploy workflows only)"))
+    print(c(DIM, f"  Tip: python3 install/install.py --optional-only   (re-run step 10 only)"))
 
     if not confirm("\nReady to begin?", True):
         print("  Aborted.")
