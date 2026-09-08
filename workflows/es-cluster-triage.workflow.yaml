@@ -1,107 +1,211 @@
 name: ES Cluster Triage Summary
-description: Runs Elasticsearch triage queries, asks an agent to summarize the
-  findings, and posts the result to Slack.
+description: Alert-triggered Elasticsearch cluster triage. Produces structured
+  verdict, routes on severity, creates/updates a Case, indexes an analytics report.
 enabled: true
 tags: ["observability", "stack-monitoring", "triage"]
 consts:
   default_metrics_pattern: "__METRICS_PATTERN__"
   slack_connector_id: "__SLACK_CONNECTOR_ID__"
+  case_owner: "__CASE_OWNER__"
+  report_index: "__REPORT_INDEX__"
+settings:
+  timeout: "15m"
+  concurrency:
+    key: "{{ event.cluster_name }}"
+    strategy: drop
+    max: 1
 triggers:
   - type: alert
 steps:
   - name: metrics_summary
-    type: elasticsearch.request
+    type: elasticsearch.esql.query
+    on-failure:
+      retry:
+        max-attempts: 3
+        delay: "5s"
+        strategy: exponential
+        max-delay: "30s"
+      continue: true
     with:
-      method: POST
-      path: /_query
-      body:
-        query: |
-          FROM {{ event.metrics_index | default: event.index_pattern | default: consts.default_metrics_pattern }}
-          | WHERE @timestamp >= NOW() - 1 hour
-          | WHERE elasticsearch.cluster.name IS NOT NULL
-          | WHERE ("{{ event.cluster_name }}" == "" OR elasticsearch.cluster.name == "{{ event.cluster_name }}")
-          | WHERE ("{{ event.node_name }}" == "" OR elasticsearch.node.name == "{{ event.node_name }}")
-          | STATS last_seen = MAX(@timestamp), node_count = MAX(elasticsearch.cluster.stats.nodes.count), avg_heap = AVG(elasticsearch.node.stats.jvm.mem.heap.used.pct), max_heap = MAX(elasticsearch.node.stats.jvm.mem.heap.used.pct), max_cpu = MAX(elasticsearch.node.stats.process.cpu.pct), write_rejected = MAX(elasticsearch.node.stats.thread_pool.write.rejected.count), search_rejected = MAX(elasticsearch.node.stats.thread_pool.search.rejected.count), bulk_rejected = MAX(elasticsearch.node.stats.thread_pool.bulk.rejected.count) BY elasticsearch.cluster.name, elasticsearch.node.name
-          | SORT max_heap DESC
-          | LIMIT 10
-  - name: summarize
+      query: |
+        FROM {{ event.metrics_index | default: event.index_pattern | default: consts.default_metrics_pattern }}
+        | WHERE @timestamp >= NOW() - 1 hour
+        | WHERE elasticsearch.cluster.name IS NOT NULL
+        | WHERE ("{{ event.cluster_name }}" == "" OR elasticsearch.cluster.name == "{{ event.cluster_name }}")
+        | WHERE ("{{ event.node_name }}" == "" OR elasticsearch.node.name == "{{ event.node_name }}")
+        | STATS
+            last_seen          = MAX(@timestamp),
+            node_count         = MAX(elasticsearch.cluster.stats.nodes.count),
+            avg_heap           = AVG(elasticsearch.node.stats.jvm.mem.heap.used.pct),
+            max_heap           = MAX(elasticsearch.node.stats.jvm.mem.heap.used.pct),
+            max_cpu            = MAX(elasticsearch.node.stats.process.cpu.pct),
+            write_rejected     = MAX(elasticsearch.node.stats.thread_pool.write.rejected.count),
+            search_rejected    = MAX(elasticsearch.node.stats.thread_pool.search.rejected.count),
+            bulk_rejected      = MAX(elasticsearch.node.stats.thread_pool.bulk.rejected.count)
+          BY elasticsearch.cluster.name, elasticsearch.node.name
+        | SORT max_heap DESC
+        | LIMIT 10
+
+  - name: triage
     type: ai.agent
     agent-id: "__AGENT_ID__"
     with:
       message: |
-        Interpret the Elasticsearch monitoring evidence and produce
-        an operator-friendly Slack incident summary.
-
-        IMPORTANT FORMATTING RULES:
-        - Output Slack-formatted text only
-        - Use *bold* section headers
-        - Use bullet lists
-        - Use triple-backtick code blocks for metrics/evidence
-        - Do NOT use markdown headers (#, ##, ###)
-        - Do NOT use markdown tables
-        - Do NOT use horizontal separators (---)
-        - Keep output concise and highly scannable
-        - Keep lines short
-        - Do not mention raw queries or internal workflow details
-
-        Required sections in this exact order:
-
-        *Summary*
-        - Short operational overview
-        - State whether impact is active, imminent, or potential
-
-        *Most likely issue*
-        - Explain the likely root cause briefly
-
-        *Evidence*
-        - Summarize the strongest signals
-        - Present node metrics inside a triple-backtick code block
-        - Example format:
-        ```text
-           Node                  Heap Max   CPU   Write Reject
-           node-a                87%        4%    0
-           node-b                86%        5%    0
-        ```
-
-        *Impacted cluster/node/index*
-        - Cluster name
-        - Affected nodes
-        - Mention impacted indices only if evidence exists
-        - If unknown, explicitly say "Index impact unknown"
-
-        *Time window*
-        - Summarize the observation period
-
-        *Recommended next checks*
-        - Provide short actionable investigation steps
-        - Prefer operational diagnostics over generic advice
-
-        *Recommended remediation*
-        - If confidence is High: provide concrete, severity-appropriate fix steps grounded in Elastic guidance (e.g. for disk at flood-stage: PUT _all/_settings {"index.blocks.read_only_allow_delete": null}, then raise watermarks temporarily, then scale nodes or delete/snapshot old indices; for heap: scale node memory or tune GC; for rejections: reduce bulk batch sizes or adjust thread-pool settings)
-        - If confidence is Medium or Low: list the specific diagnostic API or Kibana check needed before acting (e.g. GET _cat/allocation?v, GET _cluster/allocation/explain)
-        - Keep remediation conditional on the measured severity and watermark tier
-
-        *Confidence level*
-        - Low / Medium / High
-        - High only when the measured metric value, the raw byte/counter figures, and the alert signal all agree; cap at Medium when they disagree and explain the discrepancy
+        Triage this Elasticsearch cluster alert using your skills and tools.
+        Produce a structured diagnosis — the fields will be used downstream to
+        create or update a Case and send a notification.
 
         Alert metadata:
         - alert_name: {{ event.name }}
         - alert_reason: {{ event.reason }}
         - cluster_name: {{ event.cluster_name }}
         - node_name: {{ event.node_name }}
-        - index_pattern_override: {{ event.index_pattern }}
-        - metrics_index: {{ event.metrics_index | default: event.index_pattern | default: consts.default_metrics_pattern }}
 
-        Metrics evidence:
+        Metrics evidence (last 1 hour):
         {{ steps.metrics_summary.output | json }}
-  - name: notify_slack
-    type: slack
-    connector-id: "{{ consts.slack_connector_id }}"
+      schema:
+        type: object
+        properties:
+          severity:
+            type: string
+            enum: [critical, high, medium, low, healthy]
+            description: |
+              Operational severity. critical = active cluster-threatening issue (red health,
+              heap >85%, total rejections >0). high = degraded but cluster is up. medium/low =
+              warning signals with no immediate impact. healthy = no issues found.
+          confidence:
+            type: string
+            enum: [High, Medium, Low]
+            description: High only when metric values and alert signal agree.
+          headline:
+            type: string
+            description: One-line summary suitable for a case title (max 120 chars).
+          root_cause:
+            type: string
+            description: Brief root-cause hypothesis.
+          summary_markdown:
+            type: string
+            description: Full triage report in markdown for the case description / comment.
+          impacted_cluster:
+            type: string
+            description: Cluster name (used as the case dedup key).
+          evidence:
+            type: array
+            items:
+              type: string
+            description: Key metric readings that support the diagnosis.
+          remediation:
+            type: array
+            items:
+              type: string
+            description: Ordered remediation steps grounded in Elastic guidance.
+        required:
+          - severity
+          - confidence
+          - headline
+          - root_cause
+          - summary_markdown
+          - impacted_cluster
+
+  - name: find_open_case
+    type: cases.findCases
     with:
-      message: |
-        High-priority alert: {{ event.name }}.
+      owner: "{{ consts.case_owner }}"
+      status: ["open", "in-progress"]
+      tags: ["es-auto-triage"]
+      search: "{{ steps.triage.output.structured_output.impacted_cluster }}"
+      sortField: "createdAt"
+      sortOrder: "desc"
+      page: 1
+      perPage: 1
 
-        *Elasticsearch cluster triage*
+  - name: append_to_case
+    type: cases.addComment
+    if: 'steps.triage.output.structured_output.severity : ("critical" or "high") and steps.find_open_case.output.total > 0'
+    with:
+      case_id: "{{ steps.find_open_case.output.cases[0].id }}"
+      comment: |
+        ### Recurring finding — {{ steps.triage.output.structured_output.headline }}
 
-        {{ steps.summarize.output.message }}
+        **Confidence:** {{ steps.triage.output.structured_output.confidence }}
+        **Severity:** {{ steps.triage.output.structured_output.severity }}
+
+        {{ steps.triage.output.structured_output.summary_markdown }}
+
+  - name: escalate_case
+    type: cases.setSeverity
+    if: 'steps.triage.output.structured_output.severity : "critical" and steps.find_open_case.output.total > 0'
+    with:
+      case_id: "{{ steps.find_open_case.output.cases[0].id }}"
+      severity: "critical"
+
+  - name: create_case
+    type: cases.createCase
+    if: 'steps.triage.output.structured_output.severity : ("critical" or "high") and steps.find_open_case.output.total <= 0'
+    with:
+      title: "[ES Triage] {{ steps.triage.output.structured_output.headline }}"
+      description: |
+        {{ steps.triage.output.structured_output.summary_markdown }}
+
+        **Root cause:** {{ steps.triage.output.structured_output.root_cause }}
+        **Confidence:** {{ steps.triage.output.structured_output.confidence }}
+      owner: "{{ consts.case_owner }}"
+      severity: "{{ steps.triage.output.structured_output.severity }}"
+      tags: ["es-auto-triage", "stack-monitoring"]
+      settings:
+        syncAlerts: false
+
+  - name: index_report
+    type: elasticsearch.index
+    on-failure:
+      continue: true
+    with:
+      index: "{{ consts.report_index }}"
+      id: "{{ execution.id }}"
+      document:
+        "@timestamp": "{{ execution.startedAt }}"
+        workflow: "es-cluster-triage"
+        trigger: "alert"
+        execution_id: "{{ execution.id }}"
+        alert_name: "{{ event.name }}"
+        triage: "${{ steps.triage.output.structured_output }}"
+        case_id: "{{ steps.create_case.output.case.id }}"
+        case_appended: "{{ steps.find_open_case.output.total > 0 }}"
+
+  - name: route_notification
+    type: switch
+    expression: "{{ steps.triage.output.structured_output.severity }}"
+    cases:
+      - match: critical
+        steps:
+          - name: page_slack_critical
+            type: slack
+            connector-id: "{{ consts.slack_connector_id }}"
+            with:
+              message: |
+                :rotating_light: *CRITICAL — Cluster alert*
+                *{{ steps.triage.output.structured_output.headline }}*
+
+                *Root cause:* {{ steps.triage.output.structured_output.root_cause }}
+                *Confidence:* {{ steps.triage.output.structured_output.confidence }}
+
+                {{ steps.triage.output.structured_output.remediation | json }}
+
+      - match: high
+        steps:
+          - name: notify_slack_high
+            type: slack
+            connector-id: "{{ consts.slack_connector_id }}"
+            with:
+              message: |
+                :warning: *HIGH — Cluster alert*
+                *{{ steps.triage.output.structured_output.headline }}*
+
+                *Root cause:* {{ steps.triage.output.structured_output.root_cause }}
+                *Confidence:* {{ steps.triage.output.structured_output.confidence }}
+
+    default:
+      - name: no_page
+        type: console
+        with:
+          message: "Severity {{ steps.triage.output.structured_output.severity }} — no notification sent."

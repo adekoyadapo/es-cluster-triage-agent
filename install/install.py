@@ -742,12 +742,94 @@ class WorkflowPermissionError(Exception):
 
 
 def strip_slack_from_yaml(yaml_text: str) -> str:
-    """Remove the Slack connector const and notify_slack step when no webhook is configured."""
-    # Remove the slack_connector_id const line
+    """Remove the slack_connector_id const and the route_notification switch step.
+
+    The new workflow shape nests Slack inside a ``switch`` step called
+    ``route_notification``.  The old regex (targeting a top-level ``notify_slack``
+    step) would silently no-op on the new layout, leaving unresolved
+    ``__SLACK_CONNECTOR_ID__`` placeholders in the deployed YAML.
+
+    This replacement uses an indentation-aware line scan:
+    - Removes the ``slack_connector_id`` const line.
+    - Drops the entire ``route_notification`` step block (all lines from the
+      ``- name: route_notification`` header until the next same-indent step
+      header or EOF) and replaces it with a ``console`` step that logs
+      the severity so the switch branch is not empty.
+    """
+    # Remove slack_connector_id const
     yaml_text = re.sub(r"\n  slack_connector_id:.*", "", yaml_text)
-    # Remove the notify_slack step — it is always the last step, so cut from its header to EOF
-    yaml_text = re.sub(r"\n  - name: notify_slack\n.*", "", yaml_text, flags=re.DOTALL)
-    return yaml_text
+
+    # Locate the route_notification step and strip it, inserting a console fallback.
+    lines = yaml_text.splitlines()
+    out: list[str] = []
+    inside_route = False
+    step_prefix = "  - name: route_notification"  # 2-space indent (top-level steps)
+
+    for i, line in enumerate(lines):
+        if not inside_route and line.startswith(step_prefix):
+            # Replace the whole block with a silent console step
+            out.append("  - name: route_notification")
+            out.append("    type: console")
+            out.append("    with:")
+            out.append("      message: \"No Slack connector configured — triage complete.\"")
+            inside_route = True
+            continue
+
+        if inside_route:
+            # End of the route_notification block = next top-level step or EOF
+            if line.startswith("  - name: ") and not line.startswith(step_prefix):
+                inside_route = False
+                out.append(line)
+            # else: drop lines that belong to the old switch block
+            continue
+
+        out.append(line)
+
+    return "\n".join(out)
+
+
+def create_triage_reports_index(es_url: str, hdr: tuple[str, str]) -> None:
+    """Create the triage-reports index with explicit keyword/date mappings.
+
+    Idempotent — a 400 resource_already_exists_exception is silently ignored.
+    Called before workflow deployment so the index is ready when the first
+    workflow run fires.
+    """
+    mapping = {
+        "settings": {"number_of_replicas": 1},
+        "mappings": {
+            "properties": {
+                "@timestamp":    {"type": "date"},
+                "workflow":      {"type": "keyword"},
+                "trigger":       {"type": "keyword"},
+                "execution_id":  {"type": "keyword"},
+                "alert_name":    {"type": "keyword"},
+                "case_id":       {"type": "keyword"},
+                "case_appended": {"type": "boolean"},
+                "triage": {
+                    "properties": {
+                        "severity":         {"type": "keyword"},
+                        "confidence":       {"type": "keyword"},
+                        "headline":         {"type": "text"},
+                        "root_cause":       {"type": "text"},
+                        "summary_markdown": {"type": "text"},
+                        "impacted_cluster": {"type": "keyword"},
+                        "impacted_index":   {"type": "keyword"},
+                        "evidence":         {"type": "text"},
+                        "remediation":      {"type": "text"},
+                    }
+                },
+            }
+        },
+    }
+    try:
+        es_request(es_url, hdr, "PUT", "/triage-reports", body=mapping)
+        ok("triage-reports index created with explicit mappings")
+    except RuntimeError as exc:
+        if "resource_already_exists_exception" in str(exc).lower():
+            ok("triage-reports index already exists")
+        else:
+            warn(f"Could not create triage-reports index: {exc} — workflow will auto-create it on first run")
 
 
 def deploy_workflow_yaml(
@@ -958,10 +1040,19 @@ def deploy_workflows(
     wf_choice = ask("Workflow type", "1").strip()
     deployed_wfs: list[str] = []
 
+    # ── Create triage-reports index with explicit mappings ──────────────────────
+    es_url = creds.get("ES_URL", "")
+    if es_url:
+        create_triage_reports_index(es_url, hdr)
+    else:
+        info("ES_URL not available — triage-reports index will be created on first workflow run")
+
     def render_template(template_path: Path) -> str:
         yaml = template_path.read_text()
         yaml = yaml.replace("__METRICS_PATTERN__", monitoring_ds)
         yaml = yaml.replace("__AGENT_ID__", deployed_agent_id)
+        yaml = yaml.replace("__CASE_OWNER__", "observability")
+        yaml = yaml.replace("__REPORT_INDEX__", "triage-reports")
         if slack_connector_id:
             yaml = yaml.replace("__SLACK_CONNECTOR_ID__", slack_connector_id)
         else:
@@ -1493,6 +1584,10 @@ def deploy_optional_bundle(
         yaml = template_path.read_text()
         yaml = yaml.replace("__METRICS_PATTERN__", monitoring_ds)
         yaml = yaml.replace("__AGENT_ID__", deployed_agent_id)
+        yaml = yaml.replace("__CASE_OWNER__", "observability")
+        yaml = yaml.replace("__REPORT_INDEX__", "triage-reports")
+        yaml = yaml.replace("__FIELDDATA_THRESHOLD_BYTES__", "104857600")
+        yaml = yaml.replace("__SEGMENTS_THRESHOLD__", "50")
         if opt_slack_connector_id:
             yaml = yaml.replace("__SLACK_CONNECTOR_ID__", opt_slack_connector_id)
         else:

@@ -1,116 +1,216 @@
 name: Application Index Triage Summary
-description: Triggers index-level triage when a Kibana alert fires, asks an agent
-  to summarize the findings, and posts the result to Slack.
+description: Alert-triggered application index triage. Produces structured verdict,
+  routes on severity, creates/updates a Case, indexes an analytics report.
 enabled: true
 tags: ["observability", "stack-monitoring", "application", "app-index-triage"]
 consts:
   default_metrics_pattern: "__METRICS_PATTERN__"
   slack_connector_id: "__SLACK_CONNECTOR_ID__"
+  case_owner: "__CASE_OWNER__"
+  report_index: "__REPORT_INDEX__"
+settings:
+  timeout: "15m"
+  concurrency:
+    key: "{{ event.index_name }}"
+    strategy: drop
+    max: 1
 triggers:
   - type: alert
 steps:
   - name: index_metrics_summary
-    type: elasticsearch.request
+    type: elasticsearch.esql.query
+    on-failure:
+      retry:
+        max-attempts: 3
+        delay: "5s"
+        strategy: exponential
+        max-delay: "30s"
+      continue: true
     with:
-      method: POST
-      path: /_query
-      body:
-        query: |
-          FROM {{ event.metrics_index | default: event.index_pattern | default: consts.default_metrics_pattern }}
-          | WHERE @timestamp >= NOW() - 1 hour
-          | WHERE metricset.name == "index"
-          | WHERE elasticsearch.index.name IS NOT NULL
-          | WHERE ("{{ event.index_name }}" == "" OR elasticsearch.index.name LIKE "{{ event.index_name }}")
-          | WHERE ("{{ event.cluster_name }}" == "" OR elasticsearch.cluster.name == "{{ event.cluster_name }}")
-          | STATS
-              docs_count = MAX(elasticsearch.index.total.docs.count),
-              store_bytes = MAX(elasticsearch.index.total.store.size_in_bytes),
-              index_failed = MAX(elasticsearch.index.total.indexing.index_failed),
-              index_total = MAX(elasticsearch.index.total.indexing.index_total),
-              fielddata_memory_bytes = MAX(elasticsearch.index.total.fielddata.memory_size_in_bytes),
-              segments_count = MAX(elasticsearch.index.total.segments.count)
-            BY elasticsearch.cluster.name, elasticsearch.index.name
-          | SORT index_failed DESC, store_bytes DESC
-          | LIMIT 20
-  - name: summarize
+      query: |
+        FROM {{ event.metrics_index | default: event.index_pattern | default: consts.default_metrics_pattern }}
+        | WHERE @timestamp >= NOW() - 1 hour
+        | WHERE metricset.name == "index"
+        | WHERE elasticsearch.index.name IS NOT NULL
+        | WHERE ("{{ event.index_name }}" == "" OR elasticsearch.index.name LIKE "{{ event.index_name }}")
+        | WHERE ("{{ event.cluster_name }}" == "" OR elasticsearch.cluster.name == "{{ event.cluster_name }}")
+        | STATS
+            docs_count              = MAX(elasticsearch.index.total.docs.count),
+            store_bytes             = MAX(elasticsearch.index.total.store.size_in_bytes),
+            index_total             = MAX(elasticsearch.index.total.indexing.index_total),
+            index_time_ms           = MAX(elasticsearch.index.total.indexing.index_time_in_millis),
+            fielddata_memory_bytes  = MAX(elasticsearch.index.total.fielddata.memory_size_in_bytes),
+            segments_count          = MAX(elasticsearch.index.total.segments.count)
+          BY elasticsearch.cluster.name, elasticsearch.index.name
+        | SORT segments_count DESC, store_bytes DESC
+        | LIMIT 20
+
+  - name: triage
     type: ai.agent
     agent-id: "__AGENT_ID__"
     with:
       message: |
-        Triage the Elasticsearch index issue using the workflow-collected evidence below
-        and produce an operator-friendly Slack incident summary.
-
-        IMPORTANT FORMATTING RULES:
-        - Output Slack-formatted text only
-        - Use *bold* section headers
-        - Use bullet lists
-        - Use triple-backtick code blocks for metrics/evidence
-        - Do NOT use markdown headers (#, ##, ###)
-        - Do NOT use markdown tables
-        - Do NOT use horizontal separators (---)
-        - Keep output concise and highly scannable
-        - Keep lines short
-        - Do not mention raw queries, tool names, or internal workflow details
-
-        Use the appropriate skill for the symptom described in the alert.
-
-        Required sections in this exact order:
-
-        *Index*
-        - Name the affected index or data stream
-
-        *Summary*
-        - Short operational overview of the index issue
-        - State whether impact is active, imminent, or potential
-
-        *Most likely issue*
-        - Explain the likely root cause at the index level
-
-        *Evidence*
-        - Summarize the strongest signals
-        - Present index metrics inside a triple-backtick code block
-        - Example format:
-        ```text
-           Index                         Docs       Failed   Segments
-           logs-app.payments-default     1,204,332  12       87
-        ```
-
-        *Impacted scope*
-        - Index / shard / node affected
-        - If unknown, explicitly say "Scope unclear — further investigation needed"
-
-        *Time window*
-        - Summarize the observation period
-
-        *Recommended next checks*
-        - Provide short actionable investigation steps
-        - Prefer operational diagnostics over generic advice
-
-        *Recommended remediation*
-        - If confidence is High: provide concrete, severity-appropriate fix steps grounded in Elastic guidance (e.g. for unassigned shards: run GET _cluster/allocation/explain; for ILM stalls: POST <index>/_ilm/retry; for mapping explosion: set dynamic: strict on the index template)
-        - If confidence is Medium or Low: list the specific diagnostic query or Kibana check needed before acting
-        - Keep remediation conditional on the measured severity
-
-        *Confidence level*
-        - Low / Medium / High
-        - High only when metric values, raw data, and the alert signal all agree; cap at Medium when they disagree and explain the discrepancy
+        Triage this application index issue using your skills and tools.
+        Produce a structured diagnosis — the fields will be used downstream to
+        create or update a Case and send a notification.
 
         Alert metadata:
         - alert_name: {{ event.name }}
         - alert_reason: {{ event.reason }}
         - cluster_name: {{ event.cluster_name }}
         - index_name: {{ event.index_name }}
-        - metrics_index: {{ event.metrics_index | default: event.index_pattern | default: consts.default_metrics_pattern }}
 
-        Index metrics evidence:
+        Index metrics evidence (last 1 hour):
         {{ steps.index_metrics_summary.output | json }}
-  - name: notify_slack
-    type: slack
-    connector-id: "{{ consts.slack_connector_id }}"
+      schema:
+        type: object
+        properties:
+          severity:
+            type: string
+            enum: [critical, high, medium, low, healthy]
+            description: |
+              Operational severity. critical = write rejections or red status. high = segments
+              >=15, fielddata >0, or indexing time >300 ms. medium/low = warning signals.
+              healthy = no issues found.
+          confidence:
+            type: string
+            enum: [High, Medium, Low]
+            description: High only when metric values and alert signal agree.
+          headline:
+            type: string
+            description: One-line summary suitable for a case title (max 120 chars).
+          root_cause:
+            type: string
+            description: Brief root-cause hypothesis at the index level.
+          summary_markdown:
+            type: string
+            description: Full triage report in markdown for the case description / comment.
+          impacted_index:
+            type: string
+            description: Primary index or data stream name.
+          impacted_cluster:
+            type: string
+            description: Cluster name.
+          evidence:
+            type: array
+            items:
+              type: string
+            description: Key metric readings that support the diagnosis.
+          remediation:
+            type: array
+            items:
+              type: string
+            description: Ordered remediation steps grounded in Elastic guidance.
+        required:
+          - severity
+          - confidence
+          - headline
+          - root_cause
+          - summary_markdown
+          - impacted_index
+          - impacted_cluster
+
+  - name: find_open_case
+    type: cases.findCases
     with:
-      message: |
-        High-priority alert: {{ event.name }}.
+      owner: "{{ consts.case_owner }}"
+      status: ["open", "in-progress"]
+      tags: ["app-index-auto-triage"]
+      search: "{{ steps.triage.output.structured_output.impacted_index }}"
+      sortField: "createdAt"
+      sortOrder: "desc"
+      page: 1
+      perPage: 1
 
-        *Application index triage*
+  - name: append_to_case
+    type: cases.addComment
+    if: 'steps.triage.output.structured_output.severity : ("critical" or "high") and steps.find_open_case.output.total > 0'
+    with:
+      case_id: "{{ steps.find_open_case.output.cases[0].id }}"
+      comment: |
+        ### Recurring finding — {{ steps.triage.output.structured_output.headline }}
 
-        {{ steps.summarize.output.message }}
+        **Confidence:** {{ steps.triage.output.structured_output.confidence }}
+        **Severity:** {{ steps.triage.output.structured_output.severity }}
+
+        {{ steps.triage.output.structured_output.summary_markdown }}
+
+  - name: escalate_case
+    type: cases.setSeverity
+    if: 'steps.triage.output.structured_output.severity : "critical" and steps.find_open_case.output.total > 0'
+    with:
+      case_id: "{{ steps.find_open_case.output.cases[0].id }}"
+      severity: "critical"
+
+  - name: create_case
+    type: cases.createCase
+    if: 'steps.triage.output.structured_output.severity : ("critical" or "high") and steps.find_open_case.output.total <= 0'
+    with:
+      title: "[Index Triage] {{ steps.triage.output.structured_output.headline }}"
+      description: |
+        {{ steps.triage.output.structured_output.summary_markdown }}
+
+        **Root cause:** {{ steps.triage.output.structured_output.root_cause }}
+        **Confidence:** {{ steps.triage.output.structured_output.confidence }}
+      owner: "{{ consts.case_owner }}"
+      severity: "{{ steps.triage.output.structured_output.severity }}"
+      tags: ["app-index-auto-triage", "stack-monitoring"]
+      settings:
+        syncAlerts: false
+
+  - name: index_report
+    type: elasticsearch.index
+    on-failure:
+      continue: true
+    with:
+      index: "{{ consts.report_index }}"
+      id: "{{ execution.id }}"
+      document:
+        "@timestamp": "{{ execution.startedAt }}"
+        workflow: "app-index-triage"
+        trigger: "alert"
+        execution_id: "{{ execution.id }}"
+        alert_name: "{{ event.name }}"
+        triage: "${{ steps.triage.output.structured_output }}"
+        case_id: "{{ steps.create_case.output.case.id }}"
+        case_appended: "{{ steps.find_open_case.output.total > 0 }}"
+
+  - name: route_notification
+    type: switch
+    expression: "{{ steps.triage.output.structured_output.severity }}"
+    cases:
+      - match: critical
+        steps:
+          - name: page_slack_critical
+            type: slack
+            connector-id: "{{ consts.slack_connector_id }}"
+            with:
+              message: |
+                :rotating_light: *CRITICAL — Index alert*
+                *{{ steps.triage.output.structured_output.headline }}*
+
+                *Index:* {{ steps.triage.output.structured_output.impacted_index }}
+                *Root cause:* {{ steps.triage.output.structured_output.root_cause }}
+                *Confidence:* {{ steps.triage.output.structured_output.confidence }}
+
+                {{ steps.triage.output.structured_output.remediation | json }}
+
+      - match: high
+        steps:
+          - name: notify_slack_high
+            type: slack
+            connector-id: "{{ consts.slack_connector_id }}"
+            with:
+              message: |
+                :warning: *HIGH — Index alert*
+                *{{ steps.triage.output.structured_output.headline }}*
+
+                *Index:* {{ steps.triage.output.structured_output.impacted_index }}
+                *Root cause:* {{ steps.triage.output.structured_output.root_cause }}
+                *Confidence:* {{ steps.triage.output.structured_output.confidence }}
+
+    default:
+      - name: no_page
+        type: console
+        with:
+          message: "Severity {{ steps.triage.output.structured_output.severity }} — no notification sent."

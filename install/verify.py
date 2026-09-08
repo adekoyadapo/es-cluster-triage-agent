@@ -227,19 +227,23 @@ def main() -> int:
     else:
         err(f"{len(missing_skills)} skills missing: {missing_skills}")
 
-    # ── Workflow ───────────────────────────────────────────────────────────────
-    print(c(BOLD, "\n  [5/5] Workflow & Data"))
-    workflow_id = installed.get("workflow_id", "")
-    if workflow_id:
+    # ── Workflows ──────────────────────────────────────────────────────────────
+    print(c(BOLD, "\n  [5/5] Workflows & Data"))
+    workflow_ids: list[str] = installed.get("workflows", [])
+    # Also pick up optional agent workflows
+    workflow_ids = workflow_ids + installed.get("optional_workflows", [])
+    if not workflow_ids:
+        warn("No workflows recorded in install manifest — skipping workflow check")
+    for workflow_id in workflow_ids:
         try:
             wf = kibana_request(kb_url, hdr, "GET", space_path(namespace, f"/api/workflows/workflow/{workflow_id}"))
             wf_name = wf.get("name", workflow_id)
-            ok(f"Workflow '{wf_name}' present")
+            ok(f"Workflow '{wf_name}' present ({workflow_id})")
         except RuntimeError as exc:
             if "HTTP 404" in str(exc):
                 warn(f"Workflow '{workflow_id}' not found")
             else:
-                warn(f"Workflow check: {exc}")
+                warn(f"Workflow check ({workflow_id}): {exc}")
 
     # ES|QL data check
     if es_url and monitoring_ds:
