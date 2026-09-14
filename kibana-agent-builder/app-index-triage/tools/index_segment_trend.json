@@ -1,0 +1,28 @@
+{
+  "configuration": {
+    "params": {
+      "cluster_name": {
+        "description": "Optional cluster name filter; use an empty string to query all clusters.",
+        "type": "string"
+      },
+      "index_pattern": {
+        "description": "Index or data stream pattern to investigate. Required.",
+        "type": "string"
+      },
+      "lookback": {
+        "description": "Lookback window (e.g. 4 hours, 6 hours, 24 hours). Use longer windows to confirm persistence.",
+        "type": "string"
+      }
+    },
+    "query": "FROM .monitoring-es-*\n| WHERE @timestamp >= NOW() - TO_TIMEDURATION(?lookback)\n| WHERE metricset.name == \"index\"\n| WHERE elasticsearch.index.name LIKE ?index_pattern\n| WHERE (?cluster_name == \"\" OR elasticsearch.cluster.name == ?cluster_name)\n| STATS\n    segments_count      = MAX(elasticsearch.index.total.segments.count),\n    index_time_ms       = MAX(elasticsearch.index.total.indexing.index_time_in_millis),\n    fielddata_bytes     = MAX(elasticsearch.index.total.fielddata.memory_size_in_bytes),\n    docs_count          = MAX(elasticsearch.index.total.docs.count),\n    search_query_total  = MAX(elasticsearch.index.total.search.query_total)\n  BY bucket = DATE_TRUNC(15 minutes, @timestamp),\n     elasticsearch.cluster.name,\n     elasticsearch.index.name\n| SORT elasticsearch.index.name ASC, bucket ASC\n| LIMIT 200"
+  },
+  "description": "Time-series trend of segment count, indexing latency, and fielddata memory in 15-minute buckets. Use to confirm whether elevated segment counts or indexing latency spikes are persistent trends or isolated events. A steadily rising segment count across multiple buckets indicates merge is not keeping up; a single-bucket spike is transient.",
+  "id": "app-index-triage-index_segment_trend",
+  "tags": [
+    "app-index-triage",
+    "application",
+    "observability",
+    "stack-monitoring"
+  ],
+  "type": "esql"
+}

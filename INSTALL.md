@@ -161,7 +161,7 @@ After the main agent is deployed and validated, the installer offers to deploy a
 
 It reuses the same monitoring and log datastreams configured in step 5. No additional credentials or patterns are needed.
 
-### 5 skills, 16 tools (including 2 discovery tools)
+### 5 skills, 18 tools (including 2 discovery tools)
 
 | Skill | Investigates |
 |---|---|
@@ -176,8 +176,6 @@ Two discovery tools help scope which index or data stream to investigate:
 - `app-index-triage-active-log-indices` — finds standard indices with recent `elasticsearch.*` log events (log-based)
 - `app-index-triage-active-ds-indices` — groups `.ds-*` backing indices back to their parent data stream name (monitoring-based)
 
-Built-in `observability.investigation` is also assigned and triggered proactively on performance degradation (not only on errors).
-
 **Data stream support:** backing indices are named `.ds-<name>-YYYY.MM.DD-NNNNNN`. When investigating a data stream, use a wildcard pattern — e.g. `*lab-activity-ds*` — to match all backing indices across monitoring and log queries. `platform.core.get_index_mapping` is not used; Kibana is connected to the monitoring cluster, not the monitored application cluster, so all analysis is log and monitoring based.
 
 **Kibana space:** the installer lets you deploy the optional agent into a **different** Kibana space from the main agent. At step 10, after confirming deployment, the installer lists your available spaces and prompts for a space ID (defaulting to the same space as the main agent). Enter a new space ID to create it on the fly, or press Enter to accept the default.
@@ -186,6 +184,12 @@ To re-deploy the optional agent without re-running the full installer:
 
 ```bash
 python3 install/install.py --optional-only
+```
+
+To re-deploy workflows only (creates the `auto-timestamp` ingest pipeline and re-uploads all workflow YAMLs):
+
+```bash
+python3 install/install.py --workflows-only
 ```
 
 The optional agent can be uninstalled independently — `python3 install/uninstall.py` asks separately whether to remove the main bundle and the optional bundle.
@@ -229,6 +233,7 @@ The uninstaller asks **separately** whether to remove the main cluster triage ag
 | `Set KIBANA_URL` fatal error | `KB_URL` not set in environment | The installer prompts for this interactively — the `.env` file is only needed for the MCP app |
 | `Agent chat did not return a response` | No LLM connector configured on the agent | Open Agent Builder → your agent → Settings → Model and assign a connector |
 | Optional agent not visible in Agent Builder | Not yet deployed | Run `python3 install/install.py --optional-only` to deploy it without re-running the full install |
+| `document_parsing_exception: failed to parse date field` in workflow `index_report` step | `auto-timestamp` ingest pipeline not yet created on the cluster | Run `python3 install/install.py --workflows-only` — creates the pipeline and redeploys all workflow YAMLs |
 
 ---
 

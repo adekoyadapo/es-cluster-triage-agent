@@ -5,6 +5,7 @@
   "name": "Application Index Mapping and Schema",
   "tool_ids": [
     "app-index-triage-mapping_error_log",
-    "app-index-triage-index_field_count_trend"
+    "app-index-triage-index_field_count_trend",
+    "app-index-triage-index_segment_trend"
   ]
 }

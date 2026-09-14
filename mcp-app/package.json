@@ -13,7 +13,12 @@
     "start:stdio": "node dist/main.js --stdio",
     "dev": "concurrently --raw \"node scripts/build-views.js --watch\" \"tsx watch main.ts --stdio\"",
     "typecheck": "tsc --noEmit",
-    "mcpb:pack": "bash scripts/build-mcpb.sh"
+    "mcpb:pack": "bash scripts/build-mcpb.sh",
+    "mcpb:pack:only": "bash scripts/pack-only.sh",
+    "mcpb:pack:combined": "bash scripts/build-mcpb.sh --mode=combined",
+    "mcpb:pack:app-index": "bash scripts/build-mcpb.sh --mode=app-index",
+    "mcpb:pack:only:combined": "bash scripts/pack-only.sh --mode=combined",
+    "mcpb:pack:only:app-index": "bash scripts/pack-only.sh --mode=app-index"
   },
   "engines": {
     "node": ">=22"

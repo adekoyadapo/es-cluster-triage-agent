@@ -1344,16 +1344,14 @@ FROM .monitoring-es-*
             <div class="timeline-num" style="background:linear-gradient(135deg,var(--el-teal),var(--el-green))">C</div>
             <div>
               <strong>Agent invocation</strong>
-              <p>Query results passed to the triage agent. Agent selects the correct skill, runs the
-                relevant query tools, and returns a structured summary.</p>
+              <p>Query results passed to the triage agent. Agent returns a typed verdict: severity, confidence, headline, root cause, evidence, and remediation steps.</p>
             </div>
           </div>
           <div class="timeline-step">
             <div class="timeline-num" style="background:linear-gradient(135deg,var(--el-green),var(--el-blue))">D</div>
             <div>
               <strong>Delivery</strong>
-              <p>Workflow posts concise triage output to Slack, PagerDuty, or the team's
-                incident channel — no human prompt required.</p>
+              <p>Workflow creates or updates a Kibana Case, indexes a triage report for analytics, and notifies Slack for critical/high severity only. Healthy and low-severity runs complete silently.</p>
             </div>
           </div>
 
@@ -1420,7 +1418,7 @@ FROM .monitoring-es-*
   <div class="two-col" style="gap:18px">
     <div>
       <div class="card" style="margin-bottom:12px">
-        <h3>5 local skills + built-in observability</h3>
+        <h3>5 local skills</h3>
         <table style="width:100%;font-size:.82rem;margin-top:6px">
           <thead><tr><th>Skill</th><th>Investigates</th></tr></thead>
           <tbody>
@@ -1431,9 +1429,6 @@ FROM .monitoring-es-*
             <tr><td>Audit &amp; Deprecations</td><td style="color:var(--el-muted)">access_denied spikes, admin actions, deprecation warnings</td></tr>
           </tbody>
         </table>
-        <div class="hbox" style="margin-top:10px;font-size:.82rem">
-          Built-in <strong>observability.investigation</strong> is also assigned — invoked proactively on performance degradation, not only on errors.
-        </div>
       </div>
 
       <div class="hbox green" style="margin:0">
@@ -1444,10 +1439,10 @@ FROM .monitoring-es-*
 
     <div>
       <div class="card" style="margin-bottom:12px">
-        <h3>16 tools — including 2 discovery tools</h3>
+        <h3>18 tools — including 2 discovery tools</h3>
         <div class="metric-row"><span><code>active-log-indices</code></span><span class="metric-val">Standard indices in the log stream</span></div>
         <div class="metric-row"><span><code>active-ds-indices</code></span><span class="metric-val">Data streams via monitoring backing indices</span></div>
-        <div class="metric-row"><span>14 diagnostic tools</span><span class="metric-val">One per symptom category, all ES|QL</span></div>
+        <div class="metric-row"><span>16 diagnostic tools</span><span class="metric-val">One per symptom category, all ES|QL</span></div>
         <div class="hbox yellow" style="margin-top:10px;font-size:.82rem">
           <strong>Data stream tip:</strong> backing indices are named <code>.ds-&lt;name&gt;-DATE-SEQ</code> —
           pass <code>*&lt;name&gt;*</code> as the pattern so all backing indices match.

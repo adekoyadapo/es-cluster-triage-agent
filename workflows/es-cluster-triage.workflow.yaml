@@ -162,8 +162,8 @@ steps:
     with:
       index: "{{ consts.report_index }}"
       id: "{{ execution.id }}"
+      pipeline: "auto-timestamp"
       document:
-        "@timestamp": "{{ execution.startedAt }}"
         workflow: "es-cluster-triage"
         trigger: "alert"
         execution_id: "{{ execution.id }}"

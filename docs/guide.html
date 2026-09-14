@@ -1018,14 +1018,14 @@ spec:
   </div>
 
   <!-- 5 skills table -->
-  <h3>5 Skills · 16 ES|QL Tools</h3>
+  <h3>5 Skills · 18 ES|QL Tools</h3>
   <table>
     <thead><tr><th>Skill</th><th>Investigates</th><th>Tools</th></tr></thead>
     <tbody>
       <tr><td><strong>Index Health &amp; Allocation</strong></td><td>Unassigned shards (NODE_LEFT, ALLOCATION_FAILED), recovery stalls, shard-limit blocks</td><td>index_status_summary · index_unassigned_events · index_recovery_events</td></tr>
-      <tr><td><strong>Mapping &amp; Schema</strong></td><td>mapper_parsing_exception, total-fields limit, fielddata memory growth, dynamic mapping</td><td>mapping_error_log · index_field_count_trend</td></tr>
+      <tr><td><strong>Mapping &amp; Schema</strong></td><td>mapper_parsing_exception, total-fields limit, fielddata memory growth, dynamic mapping</td><td>mapping_error_log · index_field_count_trend · index_segment_trend</td></tr>
       <tr><td><strong>Lifecycle &amp; Rollover</strong></td><td>ILM step errors, rollover failures, broken write aliases, DSL errors</td><td>ilm_step_errors · rollover_failure_log · index_status_summary</td></tr>
-      <tr><td><strong>Ingestion Perf &amp; Slow Ops</strong></td><td>Bulk rejections, server-log ERROR/WARN spikes, slow-log entries, circuit-breaker trips</td><td>index_indexing_failures · index_write_rejections · slow_index_log · circuit_breaker_trips</td></tr>
+      <tr><td><strong>Ingestion Perf &amp; Slow Ops</strong></td><td>Bulk rejections, server-log ERROR/WARN spikes, slow-log entries, circuit-breaker trips</td><td>index_indexing_failures · index_write_rejections · slow_index_log · circuit_breaker_trips · index_segment_trend</td></tr>
       <tr><td><strong>Audit &amp; Deprecations</strong></td><td>access_denied spikes, admin actions (create/delete/put_mapping), deprecation warnings</td><td>index_audit_access_denied · index_admin_actions · index_deprecation_warnings</td></tr>
     </tbody>
   </table>
@@ -1064,35 +1064,54 @@ python3 install/install.py --optional-only</code></pre>
   </div>
 
   <div class="card">
-    <div style="display:flex;gap:16px;align-items:flex-start;flex-wrap:wrap">
-      <div style="flex:1;min-width:200px">
-        <div class="chip chip-teal" style="margin-bottom:10px">TRIGGER</div>
-        <div style="font-weight:700;margin-bottom:4px">Kibana Alert</div>
-        <div style="font-size:.85rem;color:var(--el-muted)">Any Kibana rule — Elasticsearch health, ML anomaly, custom threshold</div>
+    <div style="display:flex;gap:10px;align-items:flex-start;flex-wrap:wrap">
+      <div style="flex:1;min-width:130px">
+        <div class="chip chip-teal" style="margin-bottom:8px">TRIGGER</div>
+        <div style="font-weight:700;margin-bottom:3px;font-size:.9rem">Alert or Schedule</div>
+        <div style="font-size:.82rem;color:var(--el-muted)">Kibana rule or fixed interval</div>
       </div>
-      <div style="font-size:1.5rem;padding-top:12px">→</div>
-      <div style="flex:1;min-width:200px">
-        <div class="chip chip-yellow" style="margin-bottom:10px">STEP 1</div>
-        <div style="font-weight:700;margin-bottom:4px">ES|QL Metrics</div>
-        <div style="font-size:.85rem;color:var(--el-muted)">Queries cluster metrics from monitoring index — heap, CPU, rejections, node count</div>
+      <div style="font-size:1.2rem;padding-top:10px">→</div>
+      <div style="flex:1;min-width:130px">
+        <div class="chip chip-yellow" style="margin-bottom:8px">ES|QL</div>
+        <div style="font-weight:700;margin-bottom:3px;font-size:.9rem">Metrics Baseline</div>
+        <div style="font-size:.82rem;color:var(--el-muted)">Heap, CPU, rejections, node count</div>
       </div>
-      <div style="font-size:1.5rem;padding-top:12px">→</div>
-      <div style="flex:1;min-width:200px">
-        <div class="chip" style="background:#0077CC18;color:#0077CC;border:1px solid #0077CC40;margin-bottom:10px">STEP 2</div>
-        <div style="font-weight:700;margin-bottom:4px">AI Agent</div>
-        <div style="font-size:.85rem;color:var(--el-muted)">Triage agent interprets evidence, uses tools as needed, returns a Markdown report</div>
+      <div style="font-size:1.2rem;padding-top:10px">→</div>
+      <div style="flex:1;min-width:130px">
+        <div class="chip" style="background:#0077CC18;color:#0077CC;border:1px solid #0077CC40;margin-bottom:8px">AI AGENT</div>
+        <div style="font-weight:700;margin-bottom:3px;font-size:.9rem">Structured Output</div>
+        <div style="font-size:.82rem;color:var(--el-muted)">severity · confidence · headline · root_cause</div>
+      </div>
+      <div style="font-size:1.2rem;padding-top:10px">→</div>
+      <div style="flex:1;min-width:130px">
+        <div class="chip" style="background:#54B39918;color:#54B399;border:1px solid #54B39940;margin-bottom:8px">CASES</div>
+        <div style="font-weight:700;margin-bottom:3px;font-size:.9rem">Dedup &amp; Create</div>
+        <div style="font-size:.82rem;color:var(--el-muted)">Append to open case or create new</div>
+      </div>
+      <div style="font-size:1.2rem;padding-top:10px">→</div>
+      <div style="flex:1;min-width:130px">
+        <div class="chip" style="background:#A78BFA18;color:#A78BFA;border:1px solid #A78BFA40;margin-bottom:8px">ANALYTICS</div>
+        <div style="font-weight:700;margin-bottom:3px;font-size:.9rem">Index Report</div>
+        <div style="font-size:.82rem;color:var(--el-muted)">Always written to triage-reports</div>
+      </div>
+      <div style="font-size:1.2rem;padding-top:10px">→</div>
+      <div style="flex:1;min-width:130px">
+        <div class="chip" style="background:#F04E9818;color:#F04E98;border:1px solid #F04E9840;margin-bottom:8px">ROUTING</div>
+        <div style="font-weight:700;margin-bottom:3px;font-size:.9rem">Severity Switch</div>
+        <div style="font-size:.82rem;color:var(--el-muted)">critical/high → Slack · others silent</div>
       </div>
     </div>
   </div>
 
-  <h3>Alert Report Format</h3>
-  <pre><code>**Summary**        One-sentence overall finding
-**Most likely issue** Root cause hypothesis
-**Evidence**       Key numbers from the tool results
-**Impacted scope** Cluster / node / index name
-**Time window**    Period the evidence covers
-**Next checks**    2-3 recommended follow-up actions
-**Confidence**     High / Medium / Low with reason</code></pre>
+  <h3>Structured Output Schema</h3>
+  <pre><code>severity          — critical | high | medium | low | healthy
+confidence        — High | Medium | Low
+headline          — one-line summary (case title, max 120 chars)
+root_cause        — brief root-cause hypothesis
+summary_markdown  — full triage report for case description / comment
+impacted_cluster  — cluster name (case dedup key)
+evidence[]        — key metric readings supporting the diagnosis
+remediation[]     — ordered remediation steps</code></pre>
 
   <h3>Connecting to a Kibana Rule</h3>
   <div class="steps">

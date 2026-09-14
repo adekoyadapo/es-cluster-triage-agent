@@ -104,21 +104,32 @@ def space_path(ns: str, path: str) -> str:
 # ── Core deploy ────────────────────────────────────────────────────────────────
 def deploy_workflow(kb_url: str, hdr: tuple, namespace: str,
                     wf_id: str, yaml_text: str, wf_name: str) -> bool:
-    """DELETE → sleep → POST → (409?) GET → PUT or retry POST."""
+    """GET → PUT if live; POST if new; force-delete + POST if tombstoned.
+
+    Kibana workflows live in an ES index. Soft-delete (no ?force=true) adds
+    deleted_at to the doc but leaves _id, so POST gets 409 and GET gets 404.
+    DELETE ?force=true physically removes the doc, freeing the ID for POST.
+    """
     wf_path = space_path(namespace, f"/api/workflows/workflow/{wf_id}")
-
-    try:
-        kb_req(kb_url, hdr, "DELETE", wf_path)
-        _log(f"  Pre-deleted {wf_id}")
-    except RuntimeError as e:
-        if "HTTP 403" in str(e):
-            warn(f"Insufficient privilege to delete {wf_id} — skipping")
-            return False
-        # 404 = doesn't exist yet, fine
-
-    time.sleep(2)
-
     body = {"id": wf_id, "yaml": yaml_text, "name": wf_name}
+    put_body = {"yaml": yaml_text, "enabled": True, "name": wf_name}
+
+    # Step 1: live record exists → update via PUT
+    existing = get_if_exists(kb_url, hdr, wf_path)
+    if existing:
+        _log(f"  {wf_id} exists — updating via PUT")
+        try:
+            kb_req(kb_url, hdr, "PUT", wf_path, body=put_body)
+            ok(f"Workflow updated: {wf_name} ({wf_id})")
+            return True
+        except RuntimeError as put_e:
+            if "HTTP 403" in str(put_e):
+                warn(f"Insufficient privilege to update {wf_id}")
+                return False
+            warn(f"PUT failed for {wf_id}: {put_e}")
+            return False
+
+    # Step 2: no live record → try POST to create
     try:
         kb_req(kb_url, hdr, "POST", space_path(namespace, "/api/workflows/workflow"), body=body)
         ok(f"Workflow deployed: {wf_name} ({wf_id})")
@@ -130,31 +141,28 @@ def deploy_workflow(kb_url: str, hdr: tuple, namespace: str,
         if "HTTP 409" not in str(e):
             raise
 
-    # 409: check if live record exists
-    existing = get_if_exists(kb_url, hdr, wf_path)
-    if existing:
-        put_body = {"yaml": yaml_text, "enabled": True, "name": wf_name}
-        try:
-            kb_req(kb_url, hdr, "PUT", wf_path, body=put_body)
-            ok(f"Workflow updated: {wf_name} ({wf_id})")
-            return True
-        except RuntimeError as put_e:
-            if "HTTP 403" in str(put_e):
-                warn(f"Insufficient privilege to update {wf_id}")
-                return False
-            warn(f"PUT failed for {wf_id}: {put_e}")
+    # Step 3: POST→409 = tombstone. Force-delete removes the ES doc physically.
+    _log(f"  POST 409 on {wf_id} — tombstone, hard-deleting with ?force=true")
+    try:
+        kb_req(kb_url, hdr, "DELETE", wf_path + "?force=true")
+        _log(f"  Force-deleted {wf_id}")
+    except RuntimeError as del_e:
+        if "HTTP 403" in str(del_e):
+            warn(f"Insufficient privilege to force-delete {wf_id}")
             return False
-    else:
-        # Tombstone race — retry POST after sleep
-        _log(f"  Tombstone race for {wf_id}, sleeping 3s then retrying")
-        time.sleep(3)
-        try:
-            kb_req(kb_url, hdr, "POST", space_path(namespace, "/api/workflows/workflow"), body=body)
-            ok(f"Workflow deployed (retry): {wf_name} ({wf_id})")
-            return True
-        except RuntimeError as retry_e:
-            warn(f"Deploy failed after retry for {wf_id}: {retry_e}")
+        _log(f"  Force-delete returned {str(del_e)[:60]} (continuing)")
+
+    # Step 4: retry POST — ID should be free now
+    try:
+        kb_req(kb_url, hdr, "POST", space_path(namespace, "/api/workflows/workflow"), body=body)
+        ok(f"Workflow deployed (after tombstone clear): {wf_name} ({wf_id})")
+        return True
+    except RuntimeError as retry_e:
+        if "HTTP 403" in str(retry_e):
+            warn(f"Insufficient privilege to create {wf_id}")
             return False
+        warn(f"Deploy failed for {wf_id} even after force-delete: {retry_e}")
+        return False
 
 # ── Render ─────────────────────────────────────────────────────────────────────
 def strip_slack(yaml_text: str) -> str:
@@ -232,6 +240,17 @@ def create_triage_reports_index(es_url: str, hdr: tuple, report_index: str) -> N
         else:
             warn(f"Could not create {report_index}: {e} — will be auto-created on first run")
 
+def create_auto_timestamp_pipeline(es_url: str, hdr: tuple) -> None:
+    pipeline = {
+        "description": "Set @timestamp from ingest time (ISO 8601 UTC)",
+        "processors": [{"set": {"field": "@timestamp", "value": "{{_ingest.timestamp}}"}}],
+    }
+    try:
+        es_req(es_url, hdr, "PUT", "/_ingest/pipeline/auto-timestamp", body=pipeline)
+        ok("auto-timestamp ingest pipeline ready")
+    except RuntimeError as e:
+        warn(f"Could not create auto-timestamp pipeline: {e}")
+
 # ── Main ───────────────────────────────────────────────────────────────────────
 def main() -> int:
     global _lf
@@ -288,9 +307,10 @@ def main() -> int:
         err(f"Cannot reach Kibana: {e}")
         return 1
 
-    # Create triage-reports index
+    # Create triage-reports index and auto-timestamp pipeline
     if es_url:
         create_triage_reports_index(es_url, hdr, report_index)
+        create_auto_timestamp_pipeline(es_url, hdr)
 
     # Build the list of workflows to deploy
     # Each entry: (workflow_id, template_path, display_name)

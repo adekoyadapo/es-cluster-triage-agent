@@ -832,43 +832,72 @@ def create_triage_reports_index(es_url: str, hdr: tuple[str, str]) -> None:
             warn(f"Could not create triage-reports index: {exc} — workflow will auto-create it on first run")
 
 
+def create_auto_timestamp_pipeline(es_url: str, hdr: tuple[str, str]) -> None:
+    """Create the auto-timestamp ingest pipeline used by index_report steps.
+
+    Sets @timestamp from _ingest.timestamp (ISO 8601 UTC) so workflows don't
+    need to pass execution.startedAt (which produces a JS Date string that
+    ES's strict_date_optional_time parser rejects).
+    Idempotent — existing pipeline is silently overwritten via PUT.
+    """
+    pipeline = {
+        "description": "Set @timestamp from ingest time (ISO 8601 UTC)",
+        "processors": [
+            {
+                "set": {
+                    "field": "@timestamp",
+                    "value": "{{_ingest.timestamp}}",
+                }
+            }
+        ],
+    }
+    try:
+        es_request(es_url, hdr, "PUT", "/_ingest/pipeline/auto-timestamp", body=pipeline)
+        ok("auto-timestamp ingest pipeline ready")
+    except RuntimeError as exc:
+        warn(f"Could not create auto-timestamp pipeline: {exc} — @timestamp may not be set correctly")
+
+
 def deploy_workflow_yaml(
     kb_url: str, hdr: tuple[str, str], namespace: str,
     workflow_id: str, yaml_text: str, wf_name: str = "",
 ) -> None:
     """Deploy a workflow using the Kibana Workflows API.
 
-    Kibana soft-deletes workflow records: DELETE sets a tombstone that blocks a
-    new POST with 409, but the same tombstoned record also fails PUT with 404.
-    The reliable sequence is:
-      1. DELETE  (clears or marks tombstone)
-      2. Sleep 2 s (give Kibana time to propagate the delete)
-      3. POST    (should succeed now that tombstone cleared)
-      4. If 409  → check with GET whether a live record still exists
-         · GET succeeds → live record: use PUT to update it
-         · GET 404      → tombstone race: sleep 3 s and retry POST once
-      5. Still failing → warn; caller sees the warning and workflow is not deployed.
+    Strategy:
+      1. GET  — if a live record exists, update it via PUT (no disruption to running executions)
+      2. POST — if no live record, create fresh
+      3. If POST → 409: the ID is soft-deleted (tombstoned). Kibana stores workflows in an ES
+         index; DELETE without ?force=true adds a `deleted_at` field but leaves the _id, so POST
+         still conflicts. DELETE ?force=true physically removes the ES document → POST then works.
+      4. Retry POST after force-delete.
 
     Raises WorkflowPermissionError on 403 so callers can handle gracefully.
     """
     wf_path = space_path(namespace, f"/api/workflows/workflow/{workflow_id}")
 
-    try:
-        kibana_request(kb_url, hdr, "DELETE", wf_path)
-        log(f"  Pre-deleted existing workflow: {workflow_id}")
-    except RuntimeError as del_exc:
-        del_str = str(del_exc)
-        if "HTTP 403" in del_str:
-            raise WorkflowPermissionError(del_str)
-        # 404 = not yet deployed — fine, continue
-
-    # Give Kibana 2 s to propagate the tombstone clear before POST
-    time.sleep(2)
-
     body: dict[str, Any] = {"id": workflow_id, "yaml": yaml_text}
     if wf_name:
         body["name"] = wf_name
+    put_body: dict[str, Any] = {"yaml": yaml_text, "enabled": True}
+    if wf_name:
+        put_body["name"] = wf_name
 
+    # Step 1: check for a live (non-deleted) record
+    existing = get_if_exists(kb_url, hdr, wf_path)
+    if existing:
+        log(f"  Workflow {workflow_id} exists — updating via PUT")
+        try:
+            kibana_request(kb_url, hdr, "PUT", wf_path, body=put_body)
+            return  # success
+        except RuntimeError as put_exc:
+            put_str = str(put_exc)
+            if "HTTP 403" in put_str:
+                raise WorkflowPermissionError(put_str)
+            warn(f"Workflow PUT failed for {workflow_id}: {put_exc}")
+            return
+
+    # Step 2: no live record — try POST to create
     try:
         kibana_request(kb_url, hdr, "POST", space_path(namespace, "/api/workflows/workflow"), body=body)
         return  # success
@@ -879,33 +908,27 @@ def deploy_workflow_yaml(
         if "HTTP 409" not in exc_str:
             raise
 
-    # 409: ID conflict — check if there is actually a live record to update
-    existing = get_if_exists(kb_url, hdr, wf_path)
-    if existing:
-        # Live record exists → update it in place
-        put_body: dict[str, Any] = {"yaml": yaml_text, "enabled": True}
-        if wf_name:
-            put_body["name"] = wf_name
-        try:
-            kibana_request(kb_url, hdr, "PUT", wf_path, body=put_body)
-            return  # success via PUT
-        except RuntimeError as put_exc:
-            put_str = str(put_exc)
-            if "HTTP 403" in put_str:
-                raise WorkflowPermissionError(put_str)
-            warn(f"Workflow PUT failed: {put_exc}")
-            return  # warn and move on — deploy attempted
-    else:
-        # Tombstone race (409 but no live record) — sleep and retry POST once
-        log(f"  Tombstone race for {workflow_id} — sleeping 3 s then retrying POST")
-        time.sleep(3)
-        try:
-            kibana_request(kb_url, hdr, "POST", space_path(namespace, "/api/workflows/workflow"), body=body)
-        except RuntimeError as retry_exc:
-            retry_str = str(retry_exc)
-            if "HTTP 403" in retry_str:
-                raise WorkflowPermissionError(retry_str)
-            warn(f"Workflow deploy failed after retry: {retry_exc}")
+    # Step 3: POST→409 means the ID is tombstoned (soft-deleted ES doc, invisible to GET but
+    # blocks POST). Use ?force=true to physically remove the doc from the ES index.
+    log(f"  POST 409 on {workflow_id} — tombstone detected, hard-deleting with ?force=true")
+    try:
+        kibana_request(kb_url, hdr, "DELETE", wf_path + "?force=true")
+        log(f"  Force-deleted {workflow_id}")
+    except RuntimeError as del_exc:
+        del_str = str(del_exc)
+        if "HTTP 403" in del_str:
+            raise WorkflowPermissionError(del_str)
+        # 404 = already gone — fine, proceed to POST
+        log(f"  Force-delete returned {del_str[:60]} (continuing)")
+
+    # Step 4: retry POST — should succeed now that the tombstone ES doc is gone
+    try:
+        kibana_request(kb_url, hdr, "POST", space_path(namespace, "/api/workflows/workflow"), body=body)
+    except RuntimeError as retry_exc:
+        retry_str = str(retry_exc)
+        if "HTTP 403" in retry_str:
+            raise WorkflowPermissionError(retry_str)
+        warn(f"Workflow '{workflow_id}' deploy failed even after force-delete: {retry_exc}")
 
 
 # ── [6] Deploy ─────────────────────────────────────────────────────────────────
@@ -1068,32 +1091,25 @@ def deploy_workflows(
         else:
             info("Skipping Slack — workflows will deploy without a notification step")
 
-    print(f"""
-  {c(CYAN, "Workflow Options")}
-  Workflows trigger triage automatically and produce AI summaries.
-
-  {c(DIM, '1')} {c(BOLD, 'Alert trigger')}    — runs when a Kibana alert fires (e.g. cluster health rule)
-  {c(DIM, '2')} {c(BOLD, 'Scheduled')}        — runs on a fixed interval (hourly/daily health check)
-  {c(DIM, '3')} {c(BOLD, 'Both')}             — deploy alert + scheduled variants
-  {c(DIM, '4')} {c(BOLD, 'Skip')}             — deploy agent only, no workflow
-    """)
-
-    wf_choice = ask("Workflow type", "1").strip()
     deployed_wfs: list[str] = []
 
     # ── Create triage-reports index with explicit mappings ──────────────────────
     es_url = creds.get("ES_URL", "")
     if es_url:
         create_triage_reports_index(es_url, hdr)
+        create_auto_timestamp_pipeline(es_url, hdr)
     else:
-        info("ES_URL not available — triage-reports index will be created on first workflow run")
+        info("ES_URL not available — triage-reports index and auto-timestamp pipeline will be created on first workflow run")
 
-    def render_template(template_path: Path) -> str:
+    def render_template(template_path: Path, interval: str = "1h") -> str:
         yaml = template_path.read_text()
         yaml = yaml.replace("__METRICS_PATTERN__", monitoring_ds)
         yaml = yaml.replace("__AGENT_ID__", deployed_agent_id)
         yaml = yaml.replace("__CASE_OWNER__", "observability")
         yaml = yaml.replace("__REPORT_INDEX__", "triage-reports")
+        yaml = yaml.replace("__SCHEDULE_INTERVAL__", interval)
+        yaml = yaml.replace("__FIELDDATA_THRESHOLD_BYTES__", "104857600")
+        yaml = yaml.replace("__SEGMENTS_THRESHOLD__", "50")
         if slack_connector_id:
             yaml = yaml.replace("__SLACK_CONNECTOR_ID__", slack_connector_id)
         else:
@@ -1124,6 +1140,75 @@ def deploy_workflows(
         info(f"Verify in Kibana → {wf_ui_url}")
         return True
 
+    # ── Redeploy mode (--workflows-only): skip interactive menus ───────────────
+    if preset_connector_id:
+        # Map workflow IDs to their template and display name
+        TEMPLATE_MAP: dict[str, tuple[Path, str]] = {
+            "alert":     (WORKFLOW_ALERT_TEMPLATE,     "ES Cluster Triage Summary"),
+            "scheduled": (WORKFLOW_SCHEDULED_TEMPLATE, "ES Cluster Triage Scheduled"),
+        }
+        saved_wf_ids = installed.get("workflows", []) + installed.get("optional_workflows", [])
+        if not saved_wf_ids:
+            warn("No workflows in saved install manifest — nothing to redeploy")
+            warn("Run the full installer first to establish a workflow list")
+            return
+
+        # Extract the saved interval from any existing scheduled workflow YAML
+        saved_interval = "1h"
+        for existing_wf_id in saved_wf_ids:
+            if "scheduled" in existing_wf_id:
+                existing_wf = get_if_exists(
+                    kb_url, hdr,
+                    space_path(namespace, f"/api/workflows/workflow/{existing_wf_id}")
+                )
+                if existing_wf:
+                    yaml_body = existing_wf.get("yaml", "")
+                    m = re.search(r"every:\s*['\"]?(\d+[smhd])['\"]?", yaml_body)
+                    if m:
+                        saved_interval = m.group(1)
+                        info(f"Reusing saved schedule interval: {saved_interval}")
+                break
+
+        info(f"Redeploying {len(saved_wf_ids)} workflow(s) from saved manifest…")
+        for wf_id in saved_wf_ids:
+            suffix = wf_id.split("-")[-1]  # "alert" or "scheduled"
+            if "app-index" in wf_id:
+                tmpl = ROOT / "workflows" / (
+                    "app-index-triage-scheduled.workflow.yaml" if "scheduled" in wf_id
+                    else "app-index-triage.workflow.yaml"
+                )
+                name = "Application Index Triage Scheduled" if "scheduled" in wf_id else "Application Index Triage Summary"
+            else:
+                entry = TEMPLATE_MAP.get(suffix)
+                if not entry:
+                    warn(f"Unknown workflow suffix '{suffix}' for '{wf_id}' — skipping")
+                    continue
+                tmpl, name = entry
+            info(f"Deploying: {name} ({wf_id})")
+            yaml_text = render_template(tmpl, interval=saved_interval)
+            if deploy_and_verify_workflow(wf_id, yaml_text, name):
+                deployed_wfs.append(wf_id)
+
+        if deployed_wfs:
+            installed["workflows"] = [w for w in deployed_wfs if "app-index" not in w] or installed.get("workflows", [])
+            installed["optional_workflows"] = [w for w in deployed_wfs if "app-index" in w] or installed.get("optional_workflows", [])
+        INSTALLED_FILE.write_text(json.dumps(installed, indent=2))
+        INSTALLED_FILE.chmod(0o600)
+        return
+
+    # ── Interactive mode (full install): show workflow type menu ───────────────
+    print(f"""
+  {c(CYAN, "Workflow Options")}
+  Workflows trigger triage automatically and produce AI summaries.
+
+  {c(DIM, '1')} {c(BOLD, 'Alert trigger')}    — runs when a Kibana alert fires (e.g. cluster health rule)
+  {c(DIM, '2')} {c(BOLD, 'Scheduled')}        — runs on a fixed interval (hourly/daily health check)
+  {c(DIM, '3')} {c(BOLD, 'Both')}             — deploy alert + scheduled variants
+  {c(DIM, '4')} {c(BOLD, 'Skip')}             — deploy agent only, no workflow
+    """)
+
+    wf_choice = ask("Workflow type", "1").strip()
+
     # Warn if a previous install left the old long-form IDs (they cannot be deleted via API)
     old_suffix = "es-cluster-triage-summary"
     for old_type in ("alert", "scheduled"):
@@ -1152,7 +1237,7 @@ def deploy_workflows(
             warn(f"Interval '{interval}' may not be valid — expected format: 30m, 1h, 4h, 24h")
         wf_id = f"{namespace}-{WORKFLOW_ID_SUFFIX}-scheduled" if namespace != "default" else f"{WORKFLOW_ID_SUFFIX}-scheduled"
         info(f"Deploying scheduled workflow: {wf_id} (every {interval})")
-        yaml_text = render_template(WORKFLOW_SCHEDULED_TEMPLATE).replace("__SCHEDULE_INTERVAL__", interval)
+        yaml_text = render_template(WORKFLOW_SCHEDULED_TEMPLATE, interval=interval)
         if deploy_and_verify_workflow(wf_id, yaml_text, "ES Cluster Triage Scheduled"):
             deployed_wfs.append(wf_id)
             ok(f"Scheduled run: every {interval}")

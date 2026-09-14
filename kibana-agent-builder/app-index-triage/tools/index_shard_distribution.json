@@ -8,15 +8,11 @@
       "index_pattern": {
         "description": "Index or data stream pattern to investigate (e.g. logs-app.payments-*, .ds-metrics-k8s-*). Required.",
         "type": "string"
-      },
-      "lookback": {
-        "description": "Lookback window as ES|QL time span text (e.g. 15 minutes, 1 hour, 24 hours).",
-        "type": "string"
       }
     },
-    "query": "FROM .monitoring-es-*\n| WHERE @timestamp >= NOW() - TO_TIMEDURATION(?lookback)\n| WHERE metricset.name == \"shard\"\n| WHERE elasticsearch.index.name LIKE ?index_pattern\n| WHERE (?cluster_name == \"\" OR elasticsearch.cluster.name == ?cluster_name)\n| STATS latest_ts = MAX(@timestamp)\n    BY elasticsearch.index.name,\n       elasticsearch.shard.number,\n       elasticsearch.shard.primary,\n       elasticsearch.node.name,\n       elasticsearch.shard.state\n| EVAL is_primary     = CASE(elasticsearch.shard.primary == true, 1, 0)\n| EVAL is_replica     = CASE(elasticsearch.shard.primary == false, 1, 0)\n| EVAL is_not_started = CASE(elasticsearch.shard.state != \"STARTED\", 1, 0)\n| STATS\n    shard_slots = COUNT(*),\n    primaries   = SUM(is_primary),\n    replicas    = SUM(is_replica),\n    not_started = SUM(is_not_started)\n  BY elasticsearch.node.name\n| SORT primaries DESC"
+    "query": "FROM .monitoring-es-*\n| WHERE @timestamp >= NOW() - 10 minutes\n| WHERE metricset.name == \"shard\"\n| WHERE elasticsearch.index.name LIKE ?index_pattern\n| WHERE (?cluster_name == \"\" OR elasticsearch.cluster.name == ?cluster_name)\n| EVAL is_started     = CASE(elasticsearch.shard.state == \"STARTED\", 1, 0)\n| EVAL is_primary     = CASE(elasticsearch.shard.primary == true AND elasticsearch.shard.state == \"STARTED\", 1, 0)\n| EVAL is_replica     = CASE(elasticsearch.shard.primary == false AND elasticsearch.shard.state == \"STARTED\", 1, 0)\n| EVAL is_unassigned  = CASE(elasticsearch.shard.state == \"UNASSIGNED\", 1, 0)\n| EVAL is_init        = CASE(elasticsearch.shard.state == \"INITIALIZING\" OR elasticsearch.shard.state == \"RELOCATING\", 1, 0)\n| STATS\n    primaries    = SUM(is_primary),\n    replicas     = SUM(is_replica),\n    unassigned   = SUM(is_unassigned),\n    transitioning = SUM(is_init)\n  BY elasticsearch.node.name, elasticsearch.cluster.name\n| SORT primaries DESC"
   },
-  "description": "Shows how primary and replica shards are distributed across nodes for the target index pattern. A node with disproportionately more primaries absorbs all write traffic — this is the monitoring-available root cause for indexing latency imbalance between indices. Also surfaces any non-STARTED shards (UNASSIGNED, INITIALIZING, RELOCATING) per node.",
+  "description": "Shows the CURRENT (last 10 minutes) shard distribution across nodes. A node with disproportionately more primaries absorbs all write traffic. Columns: primaries (STARTED primaries on this node), replicas (STARTED replicas), unassigned (shards with no node assignment RIGHT NOW), transitioning (shards currently INITIALIZING or RELOCATING). Unlike a historical aggregate, these counts reflect the live cluster state — a non-zero unassigned count is a real problem, not a historical artifact.",
   "id": "app-index-triage-index_shard_distribution",
   "tags": [
     "app-index-triage",

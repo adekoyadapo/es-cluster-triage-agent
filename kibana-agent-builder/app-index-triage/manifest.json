@@ -25,6 +25,7 @@
     "tools/circuit_breaker_trips.json",
     "tools/index_audit_access_denied.json",
     "tools/index_admin_actions.json",
-    "tools/index_deprecation_warnings.json"
+    "tools/index_deprecation_warnings.json",
+    "tools/index_segment_trend.json"
   ]
 }

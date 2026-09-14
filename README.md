@@ -154,7 +154,7 @@ A second agent persona (`app-index-triage-agent`) can be deployed after the main
 
 It focuses on **per-index** problems on application data streams. It reuses the same monitoring and log datastreams configured for the main agent and requires no additional credentials or patterns.
 
-### 5 skills, 16 tools (including 2 discovery tools for standard indices and data streams)
+### 5 skills, 18 tools (including 2 discovery tools for standard indices and data streams)
 
 | Skill | Focus |
 |---|---|
@@ -168,8 +168,6 @@ Two discovery tools help scope which index or data stream to investigate:
 
 - `app-index-triage-active-log-indices` — finds standard indices with recent `elasticsearch.*` log events (log-based)
 - `app-index-triage-active-ds-indices` — groups `.ds-*` backing indices back to their parent data stream name (monitoring-based)
-
-Built-in `observability.investigation` is also assigned and triggered proactively on performance degradation (not only on errors).
 
 **Data stream support:** backing indices are named `.ds-<name>-YYYY.MM.DD-NNNNNN`. Use a wildcard pattern — e.g. `*lab-activity-ds*` — to match all backing indices in monitoring and log queries. `platform.core.get_index_mapping` is NOT used; Kibana is connected to the monitoring cluster, not the monitored application cluster, so all analysis is log and monitoring based.
 
@@ -207,17 +205,22 @@ Confidence       — High / Medium / Low with reason if low
 
 ## Automated workflows
 
-Two workflow templates are included, both deployed by the installer:
+Four workflow templates are included: two for the ES Cluster Triage Agent (alert-triggered and scheduled) and two for the Application Index Triage Agent (alert-triggered and scheduled). The cluster triage workflows are deployed by the main installer; the index triage workflows are deployed as part of the optional agent.
 
 ### Alert-triggered workflow
-Fires when any Kibana alerting rule triggers. The workflow receives alert context (`cluster_name`, `reason`, `node_name`), queries monitoring data for that cluster, and returns a triage report.
+Fires when any Kibana alerting rule triggers. The workflow receives alert context (`cluster_name`, `reason`, `node_name`), queries monitoring data for that cluster, and returns a structured triage verdict.
 
 ```yaml
 triggers:
   - type: alert
 steps:
-  - type: elasticsearch.request   # ES|QL query on monitoring stream
-  - type: ai.agent                # Returns structured Markdown report
+  - type: elasticsearch.esql.query    # ES|QL metrics baseline
+  - type: ai.agent                    # Structured output (severity, headline, root_cause…)
+  - type: cases.findCases             # Dedup against open cases
+  - type: cases.addComment            # Append if case exists
+  - type: cases.createCase            # Create if no open case
+  - type: elasticsearch.index         # Analytics report (auto-timestamp pipeline)
+  - type: switch                      # Route: critical/high → Slack, others silent
 ```
 
 To connect it to a Kibana rule:
@@ -228,19 +231,23 @@ To connect it to a Kibana rule:
 → [Create and manage alerting rules](https://www.elastic.co/docs/explore-analyze/alerting/alerts/create-manage-rules)
 
 ### Scheduled workflow
-Runs on a fixed interval (e.g. hourly) as a background health check — no alert required.
+Runs on a fixed interval (e.g. hourly) as a background health check — no alert required. Healthy and low-severity runs complete silently; only critical/high severity triggers Slack and case creation.
 
 ```yaml
 triggers:
   - type: scheduled
     with:
-      interval: "1h"
+      every: "__SCHEDULE_INTERVAL__"
 steps:
-  - type: elasticsearch.request
-  - type: ai.agent
+  - type: elasticsearch.esql.query    # ES|QL metrics baseline
+  - type: ai.agent                    # Structured output — severity=healthy runs silently
+  - type: cases.findCases             # Dedup (only when actionable severity)
+  - type: cases.addComment            # or create_case if no open case
+  - type: elasticsearch.index         # Analytics report — always indexed
+  - type: switch                      # critical/high → Slack, medium/low/healthy → silent
 ```
 
-The interval is set interactively during install. Results appear in the Kibana Workflow execution history.
+The interval is set interactively during install. Results appear in the Kibana Workflow execution history and in the `triage-reports` index.
 
 → [Kibana Workflows](https://www.elastic.co/docs/explore-analyze/workflows)
 
@@ -266,12 +273,14 @@ es-cluster-triage-agent/
 │   └── app-index-triage/
 │       ├── manifest.json       # Bundle descriptor for optional per-index triage agent
 │       ├── agent.json          # Agent definition with per-index instructions and skill routing
-│       ├── tools/              # 16 ES|QL tool JSON definitions (14 diagnostic + 2 discovery)
+│       ├── tools/              # 18 ES|QL tool JSON definitions (16 diagnostic + 2 discovery)
 │       └── skills/             # 5 skill group JSON definitions
 │
 ├── workflows/
-│   ├── es-cluster-triage.workflow.yaml            # Alert-triggered workflow template
-│   └── es-cluster-triage-scheduled.workflow.yaml  # Scheduled workflow template
+│   ├── es-cluster-triage.workflow.yaml               # Alert-triggered (cluster)
+│   ├── es-cluster-triage-scheduled.workflow.yaml      # Scheduled (cluster)
+│   ├── app-index-triage.workflow.yaml                 # Alert-triggered (index)
+│   └── app-index-triage-scheduled.workflow.yaml       # Scheduled (index)
 │
 ├── agents/
 │   └── elasticsearch_cluster_triage_agent.md      # Agent system prompt reference
@@ -300,6 +309,9 @@ python3 install/install.py
 
 # Re-deploy optional agent only (skips steps 1–9)
 python3 install/install.py --optional-only
+
+# Re-deploy workflows only (creates auto-timestamp pipeline + re-uploads all workflow YAMLs)
+python3 install/install.py --workflows-only
 
 # Check a live deployment
 python3 install/verify.py

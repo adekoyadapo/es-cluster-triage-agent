@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# Pack an existing dist/ into a .mcpb without re-running TypeScript or view builds.
+# Requires a prior `npm run build` or `npm run mcpb:pack`.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -17,13 +19,17 @@ case "$MODE" in
   *) echo "Unknown --mode '$MODE'. Use cluster, app-index, or combined." >&2; exit 1 ;;
 esac
 
-echo "==> Build mode: $MODE"
+if [ ! -f dist/main.js ]; then
+  echo "Error: dist/main.js not found. Run 'npm run build' first." >&2
+  exit 1
+fi
 
-echo "==> Cleaning stale dist/views..."
-rm -rf dist/views
-
-echo "==> Building TypeScript + views..."
-npm run build
+# Determine output name
+case "$MODE" in
+  cluster)  OUT_NAME="elastic-cluster-triage-agent.mcpb" ;;
+  app-index) OUT_NAME="elastic-app-index-triage-agent.mcpb" ;;
+  combined)  OUT_NAME="elastic-triage-combined.mcpb" ;;
+esac
 
 echo "==> Bundling server with esbuild (BUILD_MODE=$MODE)..."
 npx esbuild dist/main.js \
@@ -35,20 +41,7 @@ npx esbuild dist/main.js \
   "--define:BUILD_MODE=\"$MODE\"" \
   --banner:js="import{createRequire}from'module';const require=createRequire(import.meta.url);"
 
-# Determine output name and whether to swap manifest
-case "$MODE" in
-  cluster)
-    OUT_NAME="elastic-cluster-triage-agent.mcpb"
-    ;;
-  app-index)
-    OUT_NAME="elastic-app-index-triage-agent.mcpb"
-    ;;
-  combined)
-    OUT_NAME="elastic-triage-combined.mcpb"
-    ;;
-esac
-
-# Swap manifest for non-cluster modes (mcpb pack uses manifest.json from cwd)
+# Swap manifest for non-cluster modes
 MANIFEST_SWAPPED=false
 if [ "$MODE" != "cluster" ] && [ -f "manifest-${MODE}.json" ]; then
   cp manifest.json manifest.cluster.json.bak
@@ -75,6 +68,3 @@ fi
 VERSION=$(node -e "console.log(require('./package.json').version)")
 echo ""
 echo "==> Done! ${OUT_NAME} (v${VERSION}) is ready."
-echo ""
-echo "Install in Claude Desktop:"
-echo "  Double-click ${OUT_NAME}"
